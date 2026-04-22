@@ -31,7 +31,8 @@ import (
 const (
 	envbuilderImage = "ghcr.io/coder/envbuilder:latest"
 	agentPodName    = "agent"
-	registryBase    = "slaktforskning-registry:5050"
+	// In-cluster registry address (internal port 5000); host-side is localhost:5050
+	registryBase = "slaktforskning-registry:5000"
 )
 
 func int64Ptr(i int64) *int64 { return &i }
@@ -64,8 +65,13 @@ func agentPod(task *devpipelinev1alpha1.DevTask, githubToken, anthropicKey strin
 	cacheRepo := registryBase + "/" + repo + "-devcontainer"
 	prompt := buildAgentPrompt(task)
 
+	// Install deps with --legacy-peer-deps as a workaround for devcontainer
+	// postCreateCommand peer dep failure; this ensures node_modules exist before
+	// the agent tries to run tests.
 	runScript := fmt.Sprintf(
-		"#!/bin/bash\nset -e\ncd /workspaces/%s\nclaude -p %q "+
+		"#!/bin/bash\nset -e\ncd /workspaces/%s\n"+
+			"npm install --legacy-peer-deps --silent 2>/tmp/npm-install.log || true\n"+
+			"claude -p %q "+
 			"--allowedTools 'Read,Edit,Write,Bash,mcp__github' "+
 			"--dangerously-skip-permissions --output-format json > /tmp/claude-output.json",
 		repo, prompt,
