@@ -46,7 +46,7 @@ Edit `/Users/jonasahnstedt/git/slaktforskning/.mcp.json` to add the github entry
       "command": "npx",
       "args": ["-y", "@modelcontextprotocol/server-github"],
       "env": {
-        "GITHUB_PERSONAL_ACCESS_TOKEN": "${GITHUB_TOKEN}"
+        "GITHUB_PERSONAL_ACCESS_TOKEN": "${GITHUB_PERSONAL_ACCESS_TOKEN}"
       }
     }
   }
@@ -77,7 +77,7 @@ git commit -m "chore: add GitHub MCP for agentic pipeline"
 - Modify: `/Users/jonasahnstedt/git/slaktforskning/.devcontainer/devcontainer.json`
 - Modify: `/Users/jonasahnstedt/git/slaktforskning/Dockerfile` (if claude CLI is missing)
 
-Claude Max does not use `ANTHROPIC_API_KEY`. It authenticates via `CLAUDE_CODE_OAUTH_TOKEN`. The devcontainer already forwards this from the host (see the existing `remoteEnv` block). We need to add `GITHUB_TOKEN` the same way — passed from your host environment, never committed.
+Claude Max does not use `ANTHROPIC_API_KEY`. It authenticates via `CLAUDE_CODE_OAUTH_TOKEN`. The devcontainer already forwards this from the host (see the existing `remoteEnv` block). We need to add `GITHUB_PERSONAL_ACCESS_TOKEN` the same way — passed from your host environment, never committed.
 
 **Do not hardcode tokens anywhere.** Set them once in your macOS environment and the devcontainer picks them up automatically.
 
@@ -87,7 +87,7 @@ Add to `~/.zshrc` (or run via `launchctl setenv` for persistence across VS Code 
 
 ```bash
 # Add to ~/.zshrc
-export GITHUB_TOKEN="<your-fine-grained-PAT>"
+export GITHUB_PERSONAL_ACCESS_TOKEN="<your-fine-grained-PAT>"
 export CLAUDE_CODE_OAUTH_TOKEN="<your-Claude-Max-OAuth-token>"
 ```
 
@@ -101,9 +101,9 @@ python3 -c "import json; d=json.load(open(open.path.expanduser('~/.claude/.crede
 
 The fine-grained PAT needs: Contents Read+Write, Issues Read+Write, Pull Requests Read+Write, scoped to `jonaseck2/slaktforskning`.
 
-- [ ] **Step 2: Add GITHUB_TOKEN to the devcontainer remoteEnv**
+- [ ] **Step 2: Add GITHUB_PERSONAL_ACCESS_TOKEN to the devcontainer remoteEnv**
 
-The existing `devcontainer.json` already forwards `CLAUDE_CODE_OAUTH_TOKEN` from the host. Add `GITHUB_TOKEN` alongside it.
+The existing `devcontainer.json` already forwards `CLAUDE_CODE_OAUTH_TOKEN` from the host. Add `GITHUB_PERSONAL_ACCESS_TOKEN` alongside it.
 
 Edit `/Users/jonasahnstedt/git/slaktforskning/.devcontainer/devcontainer.json`:
 
@@ -116,13 +116,13 @@ Find the `remoteEnv` block:
 }
 ```
 
-Add `GITHUB_TOKEN`:
+Add `GITHUB_PERSONAL_ACCESS_TOKEN`:
 
 ```json
 "remoteEnv": {
     "DISPLAY": ":99",
     "CLAUDE_CODE_OAUTH_TOKEN": "${localEnv:CLAUDE_CODE_OAUTH_TOKEN}",
-    "GITHUB_TOKEN": "${localEnv:GITHUB_TOKEN}"
+    "GITHUB_PERSONAL_ACCESS_TOKEN": "${localEnv:GITHUB_PERSONAL_ACCESS_TOKEN}"
 }
 ```
 
@@ -150,7 +150,7 @@ Then in the container terminal verify:
 
 ```bash
 claude --version             # expected: 1.x.x
-echo "${GITHUB_TOKEN}" | head -c 10  # expected: first 10 chars of your PAT (not empty)
+echo "${GITHUB_PERSONAL_ACCESS_TOKEN}" | head -c 10  # expected: first 10 chars of your PAT (not empty)
 echo "${CLAUDE_CODE_OAUTH_TOKEN}" | head -c 10  # expected: first 10 chars (not empty)
 ```
 
@@ -170,7 +170,7 @@ Expected: `github` appears in the list alongside `slaktforskning` and `slaktfors
 ```bash
 cd /Users/jonasahnstedt/git/slaktforskning
 git add .devcontainer/devcontainer.json Dockerfile
-git commit -m "chore: pass GITHUB_TOKEN via remoteEnv, install claude CLI"
+git commit -m "chore: pass GITHUB_PERSONAL_ACCESS_TOKEN via remoteEnv, install claude CLI"
 ```
 
 ---
@@ -254,7 +254,7 @@ This is the core validation. We run the agent locally inside the devcontainer an
 Inside the devcontainer (these come from `remoteEnv` → `localEnv` — no manual export needed):
 
 ```bash
-echo "GITHUB_TOKEN set: $([ -n "${GITHUB_TOKEN}" ] && echo yes || echo NO)"
+echo "GITHUB_PERSONAL_ACCESS_TOKEN set: $([ -n "${GITHUB_PERSONAL_ACCESS_TOKEN}" ] && echo yes || echo NO)"
 echo "CLAUDE_CODE_OAUTH_TOKEN set: $([ -n "${CLAUDE_CODE_OAUTH_TOKEN}" ] && echo yes || echo NO)"
 ```
 
