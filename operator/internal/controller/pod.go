@@ -59,7 +59,7 @@ func buildAgentPrompt(task *devpipelinev1alpha1.DevTask) string {
 	)
 }
 
-func agentPod(task *devpipelinev1alpha1.DevTask, githubToken, anthropicKey string) *corev1.Pod {
+func agentPod(task *devpipelinev1alpha1.DevTask, githubToken, claudeToken string) *corev1.Pod {
 	ns := taskNamespace(task)
 	repo := repoName(task.Spec.Repo)
 	cacheRepo := registryBase + "/" + repo + "-devcontainer"
@@ -106,7 +106,9 @@ func agentPod(task *devpipelinev1alpha1.DevTask, githubToken, anthropicKey strin
 					{Name: "ENVBUILDER_POST_START_SCRIPT_PATH", Value: "/tmp/run-agent.sh"},
 					{Name: "ENVBUILDER_INSECURE", Value: "true"},
 					{Name: "GITHUB_PERSONAL_ACCESS_TOKEN", Value: githubToken},
-					{Name: "ANTHROPIC_API_KEY", Value: anthropicKey},
+					// Support both Claude Max (OAuth) and API key auth
+					{Name: "CLAUDE_CODE_OAUTH_TOKEN", Value: claudeToken},
+					{Name: "ANTHROPIC_API_KEY", Value: claudeToken},
 					// Git identity required for DCO: git commit -s generates Signed-off-by from these.
 					// Moved to per-task Secrets in Phase 3.
 					{Name: "GIT_AUTHOR_NAME", Value: "Jonas Ahnstedt"},

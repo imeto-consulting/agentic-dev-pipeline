@@ -58,7 +58,11 @@ func (r *DevTaskReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		if err := ensureNamespace(ctx, r.Client, task); err != nil {
 			return ctrl.Result{}, fmt.Errorf("ensure namespace: %w", err)
 		}
-		pod := agentPod(task, os.Getenv("GITHUB_PERSONAL_ACCESS_TOKEN"), os.Getenv("ANTHROPIC_API_KEY"))
+		claudeToken := os.Getenv("CLAUDE_CODE_OAUTH_TOKEN")
+		if claudeToken == "" {
+			claudeToken = os.Getenv("ANTHROPIC_API_KEY")
+		}
+		pod := agentPod(task, os.Getenv("GITHUB_PERSONAL_ACCESS_TOKEN"), claudeToken)
 		if err := ensurePod(ctx, r.Client, pod); err != nil {
 			return ctrl.Result{}, fmt.Errorf("ensure pod: %w", err)
 		}
