@@ -93,9 +93,12 @@ func agentPod(task *devpipelinev1alpha1.DevTask, githubToken, anthropicKey strin
 				Name:  "agent",
 				Image: envbuilderImage,
 				Env: []corev1.EnvVar{
-					{Name: "ENVBUILDER_REPO_URL", Value: "https://github.com/" + task.Spec.Repo},
+					{Name: "ENVBUILDER_GIT_URL", Value: "https://github.com/" + task.Spec.Repo},
+					{Name: "ENVBUILDER_GIT_USERNAME", Value: "x-access-token"},
+					{Name: "ENVBUILDER_GIT_PASSWORD", Value: githubToken},
 					{Name: "ENVBUILDER_CACHE_REPO", Value: cacheRepo},
 					{Name: "ENVBUILDER_POST_START_SCRIPT_PATH", Value: "/tmp/run-agent.sh"},
+					{Name: "ENVBUILDER_INSECURE", Value: "true"},
 					{Name: "GITHUB_PERSONAL_ACCESS_TOKEN", Value: githubToken},
 					{Name: "ANTHROPIC_API_KEY", Value: anthropicKey},
 					// Git identity required for DCO: git commit -s generates Signed-off-by from these.
