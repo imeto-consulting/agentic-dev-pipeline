@@ -1,0 +1,4 @@
+## Append samples of your project ##
+resources:
+- devpipeline_v1alpha1_devtask.yaml
+# +kubebuilder:scaffold:manifestskustomizesamples

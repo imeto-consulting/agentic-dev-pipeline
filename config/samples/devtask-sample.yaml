@@ -1,0 +1,10 @@
+apiVersion: devpipeline.local/v1alpha1
+kind: DevTask
+metadata:
+  name: slaktforskning-test
+  namespace: devpipeline-system
+spec:
+  # Replace issueNumber with a real open issue on jonaseck2/slaktforskning
+  # that has a ready-for-development label and an implementation plan in the body.
+  issueNumber: 10
+  repo: jonaseck2/slaktforskning
