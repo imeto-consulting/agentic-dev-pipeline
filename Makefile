@@ -10,6 +10,8 @@ install:
 secrets:
 	@test -n "$(GITHUB_TOKEN)" || (echo "GITHUB_TOKEN not set" && exit 1)
 	@test -n "$(CLAUDE_TOKEN)" || (echo "CLAUDE_TOKEN not set" && exit 1)
+	@test -n "$(GIT_AUTHOR_NAME)" || (echo "GIT_AUTHOR_NAME not set" && exit 1)
+	@test -n "$(GIT_AUTHOR_EMAIL)" || (echo "GIT_AUTHOR_EMAIL not set" && exit 1)
 	kubectl create secret generic pipeline-creds \
 		--namespace devpipeline-system \
 		--from-literal=github-token="$(GITHUB_TOKEN)" \

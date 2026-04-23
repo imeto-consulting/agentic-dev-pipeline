@@ -58,13 +58,21 @@ func buildAgentPrompt(task *devpipelinev1alpha1.DevTask) string {
 			"1. Read the issue: `gh issue view %d -R %s`\n"+
 			"2. Create or check out branch: `git checkout -b claude/issue-%d 2>/dev/null || git checkout claude/issue-%d`\n"+
 			"3. Implement the fix described in the issue body. Make ALL file changes now.\n"+
-			"4. Stage everything: `git add -A`\n"+
-			"5. Commit with Signed-off-by: `git commit -s -m \"fix: one-line description of what you changed\"`\n"+
+			"4. Stage (restore pipeline-internal files first so they are not committed as deleted):\n"+
+			"   `git restore .mcp.json 2>/dev/null || true && git add -A`\n"+
+			"5. Commit with Signed-off-by: `git commit -s -m \"fix: <one-line description of what you changed>\"`\n"+
 			"6. Push: `git push -u origin claude/issue-%d`\n"+
-			"7. Create PR (CAPTURE the URL!): `PR_URL=$(gh pr create --base main --title \"fix: one-line description\" --body \"Closes #%d\") && echo \"PR: $PR_URL\"`\n"+
-			"8. Comment PR URL on issue: `gh issue comment %d -R %s --body \"PR: $PR_URL\"`\n\n"+
+			"7. Create PR (CAPTURE the URL — do not use a placeholder):\n"+
+			"   `PR_URL=$(gh pr create --base main \\\n"+
+			"     --title \"fix: <one-line description>\" \\\n"+
+			"     --body \"## Summary\\n\\nCloses #%d\\n\\n## Changes\\n\\n- <what changed and why>\\n\\n## Test plan\\n\\n- [ ] Existing tests pass\") \\\n"+
+			"   && echo \"PR: $PR_URL\"`\n"+
+			"8. Comment PR URL on issue (skip if already commented):\n"+
+			"   `gh issue view %d -R %s --json comments --jq '.[].body' | grep -qF 'PR: http' \\\n"+
+			"   || gh issue comment %d -R %s --body \"PR: $PR_URL\"`\n\n"+
 			"Rules:\n"+
-			"- ALWAYS run git add -A before git commit\n"+
+			"- NEVER use placeholder text like '<description>' or '<url>' — always use real values\n"+
+			"- ALWAYS run git restore .mcp.json before git add -A\n"+
 			"- NEVER create a PR before committing\n"+
 			"- If tests are relevant, run them after committing (step 5.5): push anyway if minor failures\n"+
 			"- If blocked: commit WIP, push, open draft PR with --draft, comment '/clarification:' on issue\n"+
@@ -75,6 +83,7 @@ func buildAgentPrompt(task *devpipelinev1alpha1.DevTask) string {
 		task.Spec.IssueNumber, task.Spec.IssueNumber,
 		task.Spec.IssueNumber,
 		task.Spec.IssueNumber,
+		task.Spec.IssueNumber, task.Spec.Repo,
 		task.Spec.IssueNumber, task.Spec.Repo,
 	)
 }
@@ -201,13 +210,22 @@ func agentPodResume(task *devpipelinev1alpha1.DevTask) *corev1.Pod {
 			"1. Read the latest issue comments: `gh issue view %d -R %s`\n"+
 			"2. The last comment is a human answer to your /clarification request. Use that to continue.\n"+
 			"3. Make all remaining file changes.\n"+
-			"4. Stage: `git add -A`\n"+
-			"5. Commit: `git commit -s -m \"fix: <description>\"`\n"+
+			"4. Stage (restore pipeline-internal files first so they are not committed as deleted):\n"+
+			"   `git restore .mcp.json 2>/dev/null || true && git add -A`\n"+
+			"5. Commit: `git commit -s -m \"fix: <one-line description>\"`\n"+
 			"6. Push: `git push -u origin claude/issue-%d`\n"+
-			"7. If the PR is not yet open: `gh pr create --base main --title \"fix: <description>\" --body \"Closes #%d\"`\n"+
-			"8. Comment PR URL on issue: `gh issue comment %d -R %s --body \"PR: <url>\"`\n\n"+
+			"7. If the PR is not yet open:\n"+
+			"   `PR_URL=$(gh pr create --base main \\\n"+
+			"     --title \"fix: <one-line description>\" \\\n"+
+			"     --body \"## Summary\\n\\nCloses #%d\\n\\n## Changes\\n\\n- <what changed and why>\\n\\n## Test plan\\n\\n- [ ] Existing tests pass\") \\\n"+
+			"   && echo \"PR: $PR_URL\"`\n"+
+			"   If the PR already exists, capture its URL: `PR_URL=$(gh pr view --json url --jq .url)`\n"+
+			"8. Comment PR URL on issue (skip if already commented):\n"+
+			"   `gh issue view %d -R %s --json comments --jq '.[].body' | grep -qF 'PR: http' \\\n"+
+			"   || gh issue comment %d -R %s --body \"PR: $PR_URL\"`\n\n"+
 			"Rules:\n"+
-			"- ALWAYS run git add -A before git commit\n"+
+			"- NEVER use placeholder text like '<description>' or '<url>' — always use real values\n"+
+			"- ALWAYS run git restore .mcp.json before git add -A\n"+
 			"- Use Bash for all git/gh commands. GITHUB_TOKEN is pre-set.",
 		task.Spec.IssueNumber, task.Spec.Repo,
 		task.Spec.IssueNumber,
@@ -215,6 +233,7 @@ func agentPodResume(task *devpipelinev1alpha1.DevTask) *corev1.Pod {
 		task.Spec.IssueNumber, task.Spec.Repo,
 		task.Spec.IssueNumber,
 		task.Spec.IssueNumber,
+		task.Spec.IssueNumber, task.Spec.Repo,
 		task.Spec.IssueNumber, task.Spec.Repo,
 	)
 
