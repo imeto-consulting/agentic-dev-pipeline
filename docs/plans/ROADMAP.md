@@ -30,16 +30,23 @@
 
 ---
 
-### Phase 2 — k3d Cluster, CRD, Minimal Operator
-**Plan:** `docs/plans/2026-04-22-poc-phase2-k3d-operator.md`
+### Phase 2 — k3d Cluster, CRD, Minimal Operator ✅
+**Plan:** `docs/plans/archive/2026-04-22-poc-phase2-k3d-operator.md`
 
-- [ ] `k3d cluster create` with local registry and Calico
-- [ ] Kubebuilder scaffold: `DevTask` CRD + controller
-- [ ] Envbuilder builds `slaktforskning` devcontainer, caches to local registry
-- [ ] Configure git identity in agent pod (`GIT_AUTHOR_NAME`, `GIT_AUTHOR_EMAIL`, `GIT_COMMITTER_NAME`, `GIT_COMMITTER_EMAIL`) so `git commit -s` produces a valid `Signed-off-by:` line for DCO
-- [ ] `kubectl apply -f devtask-sample.yaml` → PR appears on `slaktforskning`
+- [x] `k3d cluster create` with local registry and Calico
+- [x] Kubebuilder scaffold: `DevTask` CRD + controller
+- [x] Envbuilder builds `slaktforskning` devcontainer, caches to local registry
+- [x] Configure git identity in agent pod (`GIT_AUTHOR_NAME`, `GIT_AUTHOR_EMAIL`, `GIT_COMMITTER_NAME`, `GIT_COMMITTER_EMAIL`) so `git commit -s` produces a valid `Signed-off-by:` line for DCO
+- [x] `kubectl apply -f devtask-sample.yaml` → PR appears on `slaktforskning`
 
-**Exit criteria:** `kubectl apply` triggers a real PR within ~5 minutes. DCO check passes on the PR.
+**Exit criteria:** `kubectl apply` triggers a real PR within ~5 minutes. DCO check passes on the PR. ✅ (PR #19 — jonaseck2/slaktforskning)
+
+**What we learned:**
+- Use the cached devcontainer image directly (skip envbuilder lifecycle); postCreateCommand runs on every container start and OOMKills
+- Replace GitHub MCP server (`npx @modelcontextprotocol/server-github`) with `gh` CLI — MCP spawns Node.js, which gets OOMKilled under memory pressure
+- Docker VM needs ≥ 16 GB RAM; with 8 GB, image page cache + k3s + claude = OOM
+- No memory `Limits` on the agent pod — cgroup limit fires before system OOM when image layers fill page cache; request-only (`1Gi`) is sufficient
+- Prompt must have `git add -A` explicit before `git commit`, and implementation before any push
 
 > **Note:** DCO requires only `Signed-off-by:` in the commit message (no GPG key needed). The `-s` flag on `git commit` generates this line using `git config user.name` / `user.email`, which must be set in the pod environment.
 
