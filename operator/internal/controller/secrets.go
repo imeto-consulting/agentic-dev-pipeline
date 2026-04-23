@@ -48,8 +48,8 @@ func ensureTaskSecret(ctx context.Context, c client.Client, task *devpipelinev1a
 			Namespace: taskNamespace(task),
 		},
 		StringData: map[string]string{
-			"github-token":      creds.githubToken,
-			"claude-token":      creds.claudeToken,
+			"github-token":     creds.githubToken,
+			"claude-token":     creds.claudeToken,
 			"git-author-name":  creds.gitAuthorName,
 			"git-author-email": creds.gitAuthorEmail,
 		},

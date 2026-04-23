@@ -28,9 +28,11 @@ spec:
     - name: ENVBUILDER_GIT_PASSWORD
       value: "${GITHUB_PERSONAL_ACCESS_TOKEN}"
     - name: ENVBUILDER_CACHE_REPO
-      value: slaktforskning-registry:5050/slaktforskning-devcontainer
+      value: slaktforskning-registry:5000/slaktforskning-devcontainer
     - name: ENVBUILDER_PUSH_IMAGE
       value: "true"
+    - name: ENVBUILDER_INIT_SCRIPT
+      value: "echo 'envbuilder smoke test complete'"
     - name: ENVBUILDER_INSECURE
       value: "true"
     volumeMounts:
