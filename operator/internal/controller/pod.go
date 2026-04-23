@@ -59,10 +59,10 @@ func buildAgentPrompt(task *devpipelinev1alpha1.DevTask) string {
 			"2. Create or check out branch: `git checkout -b claude/issue-%d 2>/dev/null || git checkout claude/issue-%d`\n"+
 			"3. Implement the fix described in the issue body. Make ALL file changes now.\n"+
 			"4. Stage everything: `git add -A`\n"+
-			"5. Commit with Signed-off-by: `git commit -s -m \"fix: <short description>\"`\n"+
+			"5. Commit with Signed-off-by: `git commit -s -m \"fix: one-line description of what you changed\"`\n"+
 			"6. Push: `git push -u origin claude/issue-%d`\n"+
-			"7. Create PR: `gh pr create --base main --title \"fix: <description>\" --body \"Closes #%d\"`\n"+
-			"8. Comment PR URL on issue: `gh issue comment %d -R %s --body \"PR: <url>\"`\n\n"+
+			"7. Create PR (CAPTURE the URL!): `PR_URL=$(gh pr create --base main --title \"fix: one-line description\" --body \"Closes #%d\") && echo \"PR: $PR_URL\"`\n"+
+			"8. Comment PR URL on issue: `gh issue comment %d -R %s --body \"PR: $PR_URL\"`\n\n"+
 			"Rules:\n"+
 			"- ALWAYS run git add -A before git commit\n"+
 			"- NEVER create a PR before committing\n"+
