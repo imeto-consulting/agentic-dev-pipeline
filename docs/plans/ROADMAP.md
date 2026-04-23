@@ -52,14 +52,14 @@
 
 ---
 
-### Phase 3 — Sandbox Hardening and Automated Trigger
-**Plan:** `docs/plans/2026-04-22-poc-phase3-sandbox-hardening.md`
+### Phase 3 — Sandbox Hardening and Automated Trigger ✅
+**Plan:** `docs/plans/archive/2026-04-22-poc-phase3-sandbox-hardening.md`
 
-- [ ] NetworkPolicy: deny-all + allowlist (api.github.com, api.anthropic.com, kube-dns)
-- [ ] Per-task Kubernetes Secrets (not env vars); fine-grained PAT scoped to single repo
-- [ ] Pod security: non-root, read-only rootFS, dropped caps, `activeDeadlineSeconds: 1800`
-- [ ] GitHub poller auto-creates `DevTask` CRs on `ready-for-development` label
-- [ ] Full state machine including `BlockedOnClarification`
+- [x] NetworkPolicy: deny-all + allowlist (DNS + HTTPS) per task namespace (Calico)
+- [x] Per-task Kubernetes Secrets: credentials copied from `pipeline-creds` into task namespace
+- [x] Pod security: non-root (UID 1000), read-only rootFS, drop ALL caps, seccomp RuntimeDefault
+- [x] GitHub poller auto-creates `DevTask` CRs on `ready-for-development` label (30s poll)
+- [x] Full state machine: Building→Running→AwaitingReview→Completed, BlockedOnClarification
 
 **Exit criteria:** Label an issue → wait → PR appears. No manual CR creation.
 
