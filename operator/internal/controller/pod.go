@@ -79,6 +79,15 @@ func buildAgentPrompt(task *devpipelinev1alpha1.DevTask) string {
 	)
 }
 
+func secretRef(task *devpipelinev1alpha1.DevTask, key string) *corev1.EnvVarSource {
+	return &corev1.EnvVarSource{
+		SecretKeyRef: &corev1.SecretKeySelector{
+			LocalObjectReference: corev1.LocalObjectReference{Name: taskSecretName(task)},
+			Key:                  key,
+		},
+	}
+}
+
 func agentPod(task *devpipelinev1alpha1.DevTask, githubToken, claudeToken string) *corev1.Pod {
 	ns := taskNamespace(task)
 	repo := repoName(task.Spec.Repo)
@@ -125,12 +134,20 @@ func agentPod(task *devpipelinev1alpha1.DevTask, githubToken, claudeToken string
 				RunAsGroup:   int64Ptr(1000),
 				FSGroup:      int64Ptr(1000),
 				RunAsNonRoot: boolPtr(true),
+				SeccompProfile: &corev1.SeccompProfile{
+					Type: corev1.SeccompProfileTypeRuntimeDefault,
+				},
 			},
 			InitContainers: []corev1.Container{{
 				Name:    "write-script",
 				Image:   "busybox",
 				Command: []string{"sh", "-c", "printf '%s' \"$SCRIPT\" > /tmp/run-agent.sh && chmod +x /tmp/run-agent.sh"},
 				Env:     []corev1.EnvVar{{Name: "SCRIPT", Value: runScript}},
+				SecurityContext: &corev1.SecurityContext{
+					AllowPrivilegeEscalation: boolPtr(false),
+					ReadOnlyRootFilesystem:   boolPtr(true),
+					Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
+				},
 				VolumeMounts: []corev1.VolumeMount{
 					{Name: "tmp", MountPath: "/tmp"},
 				},
@@ -139,36 +156,91 @@ func agentPod(task *devpipelinev1alpha1.DevTask, githubToken, claudeToken string
 				Name:    "agent",
 				Image:   agentImage,
 				Command: []string{"/bin/bash", "/tmp/run-agent.sh"},
+				SecurityContext: &corev1.SecurityContext{
+					AllowPrivilegeEscalation: boolPtr(false),
+					ReadOnlyRootFilesystem:   boolPtr(true),
+					Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
+				},
 				Resources: corev1.ResourceRequirements{
 					Requests: corev1.ResourceList{
 						corev1.ResourceMemory: resource.MustParse("1Gi"),
 					},
 				},
 				Env: []corev1.EnvVar{
-					{Name: "GITHUB_PERSONAL_ACCESS_TOKEN", Value: githubToken},
-					// gh CLI respects GITHUB_TOKEN for authentication
-					{Name: "GITHUB_TOKEN", Value: githubToken},
-					// Support both Claude Max (OAuth) and API key auth
-					{Name: "CLAUDE_CODE_OAUTH_TOKEN", Value: claudeToken},
-					{Name: "ANTHROPIC_API_KEY", Value: claudeToken},
-					// Git identity for DCO: git commit -s generates Signed-off-by from these.
-					// Moved to per-task Secrets in Phase 3.
-					{Name: "GIT_AUTHOR_NAME", Value: "Jonas Ahnstedt"},
-					{Name: "GIT_AUTHOR_EMAIL", Value: "jonas.ahnstedt@imeto.se"},
-					{Name: "GIT_COMMITTER_NAME", Value: "Jonas Ahnstedt"},
-					{Name: "GIT_COMMITTER_EMAIL", Value: "jonas.ahnstedt@imeto.se"},
+					{Name: "GITHUB_PERSONAL_ACCESS_TOKEN", ValueFrom: secretRef(task, "github-token")},
+					{Name: "GITHUB_TOKEN", ValueFrom: secretRef(task, "github-token")},
+					{Name: "CLAUDE_CODE_OAUTH_TOKEN", ValueFrom: secretRef(task, "claude-token")},
+					{Name: "ANTHROPIC_API_KEY", ValueFrom: secretRef(task, "claude-token")},
+					{Name: "GIT_AUTHOR_NAME", ValueFrom: secretRef(task, "git-author-name")},
+					{Name: "GIT_AUTHOR_EMAIL", ValueFrom: secretRef(task, "git-author-email")},
+					{Name: "GIT_COMMITTER_NAME", ValueFrom: secretRef(task, "git-author-name")},
+					{Name: "GIT_COMMITTER_EMAIL", ValueFrom: secretRef(task, "git-author-email")},
 				},
 				VolumeMounts: []corev1.VolumeMount{
 					{Name: "workdir", MountPath: "/workspaces"},
 					{Name: "tmp", MountPath: "/tmp"},
+					{Name: "claude-state", MountPath: "/home/node/.claude"},
 				},
 			}},
 			Volumes: []corev1.Volume{
 				{Name: "workdir", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
 				{Name: "tmp", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
+				{Name: "claude-state", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
 			},
 		},
 	}
+}
+
+func agentPodResume(task *devpipelinev1alpha1.DevTask) *corev1.Pod {
+	repo := repoName(task.Spec.Repo)
+	resumePrompt := fmt.Sprintf(
+		"You are resuming work on GitHub issue #%d in %s.\n\n"+
+			"The branch claude/issue-%d already exists on the remote. After cloning, check it out:\n"+
+			"`git checkout claude/issue-%d`\n\n"+
+			"Steps:\n"+
+			"1. Read the latest issue comments: `gh issue view %d -R %s`\n"+
+			"2. The last comment is a human answer to your /clarification request. Use that to continue.\n"+
+			"3. Make all remaining file changes.\n"+
+			"4. Stage: `git add -A`\n"+
+			"5. Commit: `git commit -s -m \"fix: <description>\"`\n"+
+			"6. Push: `git push -u origin claude/issue-%d`\n"+
+			"7. If the PR is not yet open: `gh pr create --base main --title \"fix: <description>\" --body \"Closes #%d\"`\n"+
+			"8. Comment PR URL on issue: `gh issue comment %d -R %s --body \"PR: <url>\"`\n\n"+
+			"Rules:\n"+
+			"- ALWAYS run git add -A before git commit\n"+
+			"- Use Bash for all git/gh commands. GITHUB_TOKEN is pre-set.",
+		task.Spec.IssueNumber, task.Spec.Repo,
+		task.Spec.IssueNumber,
+		task.Spec.IssueNumber,
+		task.Spec.IssueNumber, task.Spec.Repo,
+		task.Spec.IssueNumber,
+		task.Spec.IssueNumber,
+		task.Spec.IssueNumber, task.Spec.Repo,
+	)
+
+	runScript := fmt.Sprintf(
+		"#!/bin/bash\nset -e\n"+
+			"export HOME=/home/node\n"+
+			"git config --global credential.helper store\n"+
+			"echo \"https://x-access-token:${GITHUB_PERSONAL_ACCESS_TOKEN}@github.com\" > /home/node/.git-credentials\n"+
+			"git config --global --add safe.directory /workspaces/%s\n"+
+			"git config --global user.name \"${GIT_AUTHOR_NAME}\"\n"+
+			"git config --global user.email \"${GIT_AUTHOR_EMAIL}\"\n"+
+			"git clone https://github.com/%s /workspaces/%s\n"+
+			"cd /workspaces/%s\n"+
+			"git checkout claude/issue-%d\n"+
+			"rm -f .mcp.json\n"+
+			"claude -p %q "+
+			"--allowedTools 'Read,Edit,Write,Bash' "+
+			"--dangerously-skip-permissions --output-format json > /tmp/claude-output.json",
+		repo, task.Spec.Repo, repo, repo,
+		task.Spec.IssueNumber,
+		resumePrompt,
+	)
+
+	pod := agentPod(task, "", "")
+	pod.Spec.InitContainers[0].Env[0].Value = runScript
+	return pod
 }
 
 func ensurePod(ctx context.Context, c client.Client, pod *corev1.Pod) error {

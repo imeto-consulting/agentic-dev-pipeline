@@ -19,7 +19,6 @@ package controller
 import (
 	"context"
 	"fmt"
-	"os"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -43,6 +42,8 @@ type DevTaskReconciler struct {
 // +kubebuilder:rbac:groups=devpipeline.devpipeline.local,resources=devtasks/finalizers,verbs=update
 // +kubebuilder:rbac:groups="",resources=namespaces,verbs=get;list;watch;create;delete
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch;create;delete
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;delete
+// +kubebuilder:rbac:groups=networking.k8s.io,resources=networkpolicies,verbs=get;list;watch;create;delete
 
 func (r *DevTaskReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
@@ -58,11 +59,17 @@ func (r *DevTaskReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		if err := ensureNamespace(ctx, r.Client, task); err != nil {
 			return ctrl.Result{}, fmt.Errorf("ensure namespace: %w", err)
 		}
-		claudeToken := os.Getenv("CLAUDE_CODE_OAUTH_TOKEN")
-		if claudeToken == "" {
-			claudeToken = os.Getenv("ANTHROPIC_API_KEY")
+		if err := ensureNetworkPolicy(ctx, r.Client, task); err != nil {
+			return ctrl.Result{}, fmt.Errorf("ensure network policy: %w", err)
 		}
-		pod := agentPod(task, os.Getenv("GITHUB_PERSONAL_ACCESS_TOKEN"), claudeToken)
+		creds, err := readPipelineCredentials(ctx, r.Client)
+		if err != nil {
+			return ctrl.Result{RequeueAfter: 30 * time.Second}, fmt.Errorf("read credentials: %w", err)
+		}
+		if err := ensureTaskSecret(ctx, r.Client, task, creds); err != nil {
+			return ctrl.Result{}, fmt.Errorf("ensure task secret: %w", err)
+		}
+		pod := agentPod(task, creds.githubToken, creds.claudeToken)
 		if err := ensurePod(ctx, r.Client, pod); err != nil {
 			return ctrl.Result{}, fmt.Errorf("ensure pod: %w", err)
 		}
@@ -90,11 +97,60 @@ func (r *DevTaskReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 			task.Status.Message = "agent completed"
 			return ctrl.Result{RequeueAfter: 2 * time.Minute}, r.Status().Update(ctx, task)
 		case corev1.PodFailed:
+			clarified, cerr := hasRecentClarificationComment(ctx, r.Client, task)
+			if cerr == nil && clarified {
+				_ = deleteNamespace(ctx, r.Client, task.Status.Namespace)
+				task.Status.Phase = devpipelinev1alpha1.PhaseBlockedOnClarification
+				task.Status.Message = "agent requested clarification"
+				return ctrl.Result{RequeueAfter: time.Minute}, r.Status().Update(ctx, task)
+			}
 			task.Status.Phase = devpipelinev1alpha1.PhaseFailed
 			task.Status.Message = "agent pod failed"
 			return ctrl.Result{}, r.Status().Update(ctx, task)
 		}
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+
+	case devpipelinev1alpha1.PhaseAwaitingReview:
+		merged, err := isPRMergedOrClosed(ctx, r.Client, task)
+		if err != nil {
+			return ctrl.Result{RequeueAfter: 2 * time.Minute}, nil
+		}
+		if merged {
+			_ = deleteNamespace(ctx, r.Client, task.Status.Namespace)
+			task.Status.Phase = devpipelinev1alpha1.PhaseCompleted
+			task.Status.Message = "PR merged or closed, namespace deleted"
+			return ctrl.Result{}, r.Status().Update(ctx, task)
+		}
+		return ctrl.Result{RequeueAfter: 2 * time.Minute}, nil
+
+	case devpipelinev1alpha1.PhaseBlockedOnClarification:
+		humanReplied, err := humanRepliedAfterClarification(ctx, r.Client, task)
+		if err != nil || !humanReplied {
+			return ctrl.Result{RequeueAfter: time.Minute}, nil
+		}
+		creds, err := readPipelineCredentials(ctx, r.Client)
+		if err != nil {
+			return ctrl.Result{RequeueAfter: 30 * time.Second}, fmt.Errorf("read credentials: %w", err)
+		}
+		if err := ensureNamespace(ctx, r.Client, task); err != nil {
+			return ctrl.Result{}, fmt.Errorf("ensure namespace: %w", err)
+		}
+		if err := ensureNetworkPolicy(ctx, r.Client, task); err != nil {
+			return ctrl.Result{}, fmt.Errorf("ensure network policy: %w", err)
+		}
+		if err := ensureTaskSecret(ctx, r.Client, task, creds); err != nil {
+			return ctrl.Result{}, fmt.Errorf("ensure task secret: %w", err)
+		}
+		pod := agentPodResume(task)
+		if err := ensurePod(ctx, r.Client, pod); err != nil {
+			return ctrl.Result{}, fmt.Errorf("ensure pod: %w", err)
+		}
+		now := metav1.Now()
+		task.Status.Phase = devpipelinev1alpha1.PhaseBuilding
+		task.Status.Namespace = taskNamespace(task)
+		task.Status.StartedAt = &now
+		task.Status.Message = "resuming after clarification"
+		return ctrl.Result{RequeueAfter: 30 * time.Second}, r.Status().Update(ctx, task)
 
 	case devpipelinev1alpha1.PhaseCompleted, devpipelinev1alpha1.PhaseFailed:
 		return ctrl.Result{}, nil

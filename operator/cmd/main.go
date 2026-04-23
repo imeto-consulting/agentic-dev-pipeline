@@ -20,6 +20,7 @@ import (
 	"crypto/tls"
 	"flag"
 	"os"
+	"strings"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
@@ -195,6 +196,15 @@ func main() {
 		setupLog.Error(err, "Failed to set up ready check")
 		os.Exit(1)
 	}
+
+	// Start GitHub poller — auto-creates DevTask CRs for ready-for-development issues.
+	// Read target repos from PIPELINE_REPOS env var (comma-separated owner/repo pairs).
+	// Defaults to jonaseck2/slaktforskning for the POC.
+	repos := []string{"jonaseck2/slaktforskning"}
+	if r := os.Getenv("PIPELINE_REPOS"); r != "" {
+		repos = strings.Split(r, ",")
+	}
+	controller.StartGitHubPoller(ctrl.SetupSignalHandler(), mgr.GetClient(), repos)
 
 	setupLog.Info("Starting manager")
 	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
