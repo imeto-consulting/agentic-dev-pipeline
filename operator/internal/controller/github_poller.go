@@ -118,21 +118,36 @@ func ensureDevTask(ctx context.Context, c client.Client, repo string, issueNumbe
 }
 
 // isPRMergedOrClosed checks whether the PR for a DevTask has been merged or closed.
+// Falls back to searching by branch name if PRNumber is not recorded in status.
 func isPRMergedOrClosed(ctx context.Context, c client.Client, task *devpipelinev1alpha1.DevTask) (bool, error) {
-	if task.Status.PRNumber == 0 {
-		// Try to find the PR by branch name
-		return false, nil
-	}
 	creds, err := readPipelineCredentials(ctx, c)
 	if err != nil {
 		return false, err
 	}
 	parts := strings.SplitN(task.Spec.Repo, "/", 2)
 	ghClient := newGHClient(ctx, creds.githubToken)
-	pr, _, err := ghClient.PullRequests.Get(ctx, parts[0], parts[1], task.Status.PRNumber)
+
+	if task.Status.PRNumber != 0 {
+		pr, _, err := ghClient.PullRequests.Get(ctx, parts[0], parts[1], task.Status.PRNumber)
+		if err != nil {
+			return false, err
+		}
+		return pr.GetMerged() || pr.GetState() == "closed", nil
+	}
+
+	// PRNumber not recorded: search by the canonical branch name for this issue.
+	branch := fmt.Sprintf("claude/issue-%d", task.Spec.IssueNumber)
+	prs, _, err := ghClient.PullRequests.List(ctx, parts[0], parts[1], &gh.PullRequestListOptions{
+		State: "all",
+		Head:  parts[0] + ":" + branch,
+	})
 	if err != nil {
 		return false, err
 	}
+	if len(prs) == 0 {
+		return false, nil
+	}
+	pr := prs[0]
 	return pr.GetMerged() || pr.GetState() == "closed", nil
 }
 

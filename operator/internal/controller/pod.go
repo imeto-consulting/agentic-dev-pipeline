@@ -179,13 +179,13 @@ func agentPod(task *devpipelinev1alpha1.DevTask, githubToken, claudeToken string
 				VolumeMounts: []corev1.VolumeMount{
 					{Name: "workdir", MountPath: "/workspaces"},
 					{Name: "tmp", MountPath: "/tmp"},
-					{Name: "claude-state", MountPath: "/home/node/.claude"},
+					{Name: "home", MountPath: "/home/node"},
 				},
 			}},
 			Volumes: []corev1.Volume{
 				{Name: "workdir", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
 				{Name: "tmp", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
-				{Name: "claude-state", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
+				{Name: "home", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
 			},
 		},
 	}

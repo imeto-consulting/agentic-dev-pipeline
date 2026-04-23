@@ -54,7 +54,6 @@ spec:
                   PROMPT=$(sed "s/ISSUE_NUMBER/${ISSUE_NUMBER}/g" /config/prompt.txt)
                   claude -p "${PROMPT}" \
                     --allowedTools 'Bash' \
-                    --dangerously-skip-permissions \
                     --output-format json \
                     > /tmp/triage-${ISSUE_NUMBER}.json 2>&1 || true
                   echo "Done with issue #${ISSUE_NUMBER}"
@@ -103,15 +102,15 @@ spec:
             volumeMounts:
             - name: tmp
               mountPath: /tmp
-            - name: claude-state
-              mountPath: /home/node/.claude
+            - name: home
+              mountPath: /home/node
             - name: prompt
               mountPath: /config
               readOnly: true
           volumes:
           - name: tmp
             emptyDir: {}
-          - name: claude-state
+          - name: home
             emptyDir: {}
           - name: prompt
             configMap:
