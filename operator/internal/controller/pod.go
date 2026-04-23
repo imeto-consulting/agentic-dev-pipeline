@@ -54,19 +54,25 @@ func repoName(repo string) string {
 func buildAgentPrompt(task *devpipelinev1alpha1.DevTask) string {
 	return fmt.Sprintf(
 		"You are working on GitHub issue #%d in %s.\n\n"+
-			"1. Read the issue: `gh issue view %d -R %s`. Follow the plan in the issue body.\n"+
-			"2. Work on branch claude/issue-%d (create or check out with `git checkout -b claude/issue-%d || git checkout claude/issue-%d`).\n"+
-			"3. Run tests. Iterate until they pass.\n"+
-			"4. Commit with --signoff: `git commit -s -m \"...\"`. Every commit needs Signed-off-by.\n"+
-			"5. Push: `git push -u origin claude/issue-%d`.\n"+
-			"6. Open a PR: `gh pr create --base main --title \"fix: ...\" --body \"Closes #%d\"`.\n"+
-			"7. Comment on the issue: `gh issue comment %d -R %s --body \"PR: <url>\"`.\n\n"+
-			"If blocked: commit WIP with -s, push, open a draft PR with --draft, comment '/clarification:' on the issue, exit 2.\n"+
-			"Do not touch .devcontainer/, .mcp.json, or .github/workflows/ unless the issue specifically asks.\n"+
-			"Use Bash for all git and gh commands. GITHUB_TOKEN is pre-set.",
+			"Steps (in order):\n"+
+			"1. Read the issue: `gh issue view %d -R %s`\n"+
+			"2. Create or check out branch: `git checkout -b claude/issue-%d 2>/dev/null || git checkout claude/issue-%d`\n"+
+			"3. Implement the fix described in the issue body. Make ALL file changes now.\n"+
+			"4. Stage everything: `git add -A`\n"+
+			"5. Commit with Signed-off-by: `git commit -s -m \"fix: <short description>\"`\n"+
+			"6. Push: `git push -u origin claude/issue-%d`\n"+
+			"7. Create PR: `gh pr create --base main --title \"fix: <description>\" --body \"Closes #%d\"`\n"+
+			"8. Comment PR URL on issue: `gh issue comment %d -R %s --body \"PR: <url>\"`\n\n"+
+			"Rules:\n"+
+			"- ALWAYS run git add -A before git commit\n"+
+			"- NEVER create a PR before committing\n"+
+			"- If tests are relevant, run them after committing (step 5.5): push anyway if minor failures\n"+
+			"- If blocked: commit WIP, push, open draft PR with --draft, comment '/clarification:' on issue\n"+
+			"- .devcontainer/ and .github/workflows/ are fair game if the issue explicitly targets them\n"+
+			"- Use Bash for all git/gh commands. GITHUB_TOKEN is pre-set.",
 		task.Spec.IssueNumber, task.Spec.Repo,
 		task.Spec.IssueNumber, task.Spec.Repo,
-		task.Spec.IssueNumber, task.Spec.IssueNumber, task.Spec.IssueNumber,
+		task.Spec.IssueNumber, task.Spec.IssueNumber,
 		task.Spec.IssueNumber,
 		task.Spec.IssueNumber,
 		task.Spec.IssueNumber, task.Spec.Repo,
@@ -135,10 +141,7 @@ func agentPod(task *devpipelinev1alpha1.DevTask, githubToken, claudeToken string
 				Command: []string{"/bin/bash", "/tmp/run-agent.sh"},
 				Resources: corev1.ResourceRequirements{
 					Requests: corev1.ResourceList{
-						corev1.ResourceMemory: resource.MustParse("512Mi"),
-					},
-					Limits: corev1.ResourceList{
-						corev1.ResourceMemory: resource.MustParse("4Gi"),
+						corev1.ResourceMemory: resource.MustParse("1Gi"),
 					},
 				},
 				Env: []corev1.EnvVar{
