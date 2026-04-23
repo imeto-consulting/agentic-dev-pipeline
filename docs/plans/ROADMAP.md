@@ -65,14 +65,20 @@
 
 ---
 
-### Phase 4 — Triage Agent, Packaging, Demo
-**Plan:** `docs/plans/2026-04-22-poc-phase4-triage-demo.md`
+### Phase 4 — Triage Agent, Packaging, Demo ✅
+**Plan:** `docs/plans/archive/2026-04-22-poc-phase4-triage-demo.md`
 
-- [ ] Triage CronJob (every 5 min): writes plan + applies `ready-for-development`
-- [ ] Kustomization for single-command install
-- [ ] `make demo` exercises the full loop end-to-end
+- [x] Triage CronJob (every 5 min): writes implementation plan + applies `ready-for-development`
+- [x] Kustomization for single-command install (`kubectl apply -k deploy/`)
+- [x] Makefile: `cluster`, `install`, `secrets`, `run`, `demo`, `clean` targets
+- [x] Full loop demo: issue #20 → triage → PR #21 → AwaitingReview
+- [ ] AwaitingReview → Completed: pending PR #21 merge by human reviewer
 
-**Exit criteria:** File an issue → triage → implementation → PR → merge → namespace cleaned up.
+**Demo results:** `docs/plans/archive/poc-demo-results.md`
+
+**Known issues for v2.0:**
+- PR title uses literal placeholder `<description>` — prompt needs improvement
+- Triage issue comment uses `PR: <url>` literally — agent wrote placeholder, not actual URL
 
 ---
 
