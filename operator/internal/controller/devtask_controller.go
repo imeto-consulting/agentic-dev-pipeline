@@ -105,6 +105,12 @@ func (r *DevTaskReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 				task.Status.Message = "agent pod exited 0 but no PR was opened on the canonical branch"
 				return ctrl.Result{}, r.Status().Update(ctx, task)
 			}
+			// Post "PR: <url>" on the issue ourselves rather than asking the agent to.
+			// The agent's bash wrapper mangles multi-arg gh commands, leaving artifacts
+			// like an empty "PR: " comment followed by a separate URL-only comment.
+			if cerr := ensurePRCommentOnIssue(ctx, r.Client, task, pr.GetHTMLURL()); cerr != nil {
+				return ctrl.Result{RequeueAfter: 30 * time.Second}, cerr
+			}
 			task.Status.PRNumber = pr.GetNumber()
 			task.Status.Phase = devpipelinev1alpha1.PhaseAwaitingReview
 			task.Status.Message = "agent completed"

@@ -159,6 +159,32 @@ func isPRMergedOrClosed(ctx context.Context, c client.Client, task *devpipelinev
 	return pr.GetMerged() || pr.GetState() == "closed", nil
 }
 
+// ensurePRCommentOnIssue posts "PR: <url>" on the issue if no prior comment
+// already references a PR URL. Idempotent: safe to call on every reconcile.
+func ensurePRCommentOnIssue(ctx context.Context, c client.Client, task *devpipelinev1alpha1.DevTask, prURL string) error {
+	if prURL == "" {
+		return nil
+	}
+	creds, err := readPipelineCredentials(ctx, c)
+	if err != nil {
+		return err
+	}
+	parts := strings.SplitN(task.Spec.Repo, "/", 2)
+	ghClient := newGHClient(ctx, creds.githubToken)
+	comments, _, err := ghClient.Issues.ListComments(ctx, parts[0], parts[1], task.Spec.IssueNumber, nil)
+	if err != nil {
+		return err
+	}
+	for _, comment := range comments {
+		if strings.Contains(comment.GetBody(), "PR: https://") {
+			return nil
+		}
+	}
+	body := "PR: " + prURL
+	_, _, err = ghClient.Issues.CreateComment(ctx, parts[0], parts[1], task.Spec.IssueNumber, &gh.IssueComment{Body: &body})
+	return err
+}
+
 // hasRecentClarificationComment checks if the agent posted a /clarification comment on the issue.
 func hasRecentClarificationComment(ctx context.Context, c client.Client, task *devpipelinev1alpha1.DevTask) (bool, error) {
 	creds, err := readPipelineCredentials(ctx, c)
