@@ -1,0 +1,17 @@
+{
+  "name": "agentic-dev-pipeline",
+  "description": "Lets the agentic dev pipeline read issues, push branches, and open PRs on installed repos. Replaces the long-lived PAT used during POC.",
+  "url": "https://github.com/jonaseck2/agentic-dev-pipeline",
+  "public": false,
+  "default_permissions": {
+    "contents": "write",
+    "issues": "write",
+    "pull_requests": "write",
+    "metadata": "read"
+  },
+  "default_events": [],
+  "hook_attributes": {
+    "url": "https://example.invalid/no-webhook",
+    "active": false
+  }
+}

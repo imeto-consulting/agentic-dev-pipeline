@@ -82,6 +82,20 @@
 
 ---
 
+### Phase 5 — Pipeline Hardening for Public Release
+**Plan:** `docs/plans/2026-04-30-poc-phase5-pipeline-hardening.md`
+
+Smallest set of changes to close the supply-chain pivot before going public. Four tasks, in order: deterministic target-repo config script, diff policy on impl-agent PRs, label-gated plan review for risk patterns, GitHub App tokens replacing the long-lived PAT.
+
+- [ ] Task 0 — `scripts/setup-target-repo.sh` for labels + branch protection; `config/github-app-manifest.json` + `docs/github-app-setup.md` for the App
+- [ ] Task 1 — Operator-side diff policy (restricted/risky paths, file/line caps); reject + close PR on violation
+- [ ] Task 2 — Triage applies `needs-plan-review` instead of `ready-for-development` when the plan body matches a risk pattern; maintainer transitions the label by hand
+- [ ] Task 3 — GitHub App + per-DevTask installation token in place of `pipeline-creds.github-token`
+
+Add LICENSE / CONTRIBUTING / SECURITY as a separate paperwork commit after the four engineering tasks land.
+
+---
+
 ## v2.0 — Scaled Multi-Repo Pipeline
 
 Deferred until POC is solid. See `docs/plans/design/agentic-dev-pipeline-design.md`.
