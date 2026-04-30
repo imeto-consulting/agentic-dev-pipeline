@@ -117,12 +117,13 @@ func ensureDevTask(ctx context.Context, c client.Client, repo string, issueNumbe
 	return c.Create(ctx, task)
 }
 
-// isPRMergedOrClosed checks whether the PR for a DevTask has been merged or closed.
-// Falls back to searching by branch name if PRNumber is not recorded in status.
-func isPRMergedOrClosed(ctx context.Context, c client.Client, task *devpipelinev1alpha1.DevTask) (bool, error) {
+// findPRForTask returns the PR for a DevTask, by recorded PRNumber if present
+// or by searching for the canonical branch name. Returns (nil, nil) if no PR
+// exists yet.
+func findPRForTask(ctx context.Context, c client.Client, task *devpipelinev1alpha1.DevTask) (*gh.PullRequest, error) {
 	creds, err := readPipelineCredentials(ctx, c)
 	if err != nil {
-		return false, err
+		return nil, err
 	}
 	parts := strings.SplitN(task.Spec.Repo, "/", 2)
 	ghClient := newGHClient(ctx, creds.githubToken)
@@ -130,24 +131,31 @@ func isPRMergedOrClosed(ctx context.Context, c client.Client, task *devpipelinev
 	if task.Status.PRNumber != 0 {
 		pr, _, err := ghClient.PullRequests.Get(ctx, parts[0], parts[1], task.Status.PRNumber)
 		if err != nil {
-			return false, err
+			return nil, err
 		}
-		return pr.GetMerged() || pr.GetState() == "closed", nil
+		return pr, nil
 	}
 
-	// PRNumber not recorded: search by the canonical branch name for this issue.
 	branch := fmt.Sprintf("claude/issue-%d", task.Spec.IssueNumber)
 	prs, _, err := ghClient.PullRequests.List(ctx, parts[0], parts[1], &gh.PullRequestListOptions{
 		State: "all",
 		Head:  parts[0] + ":" + branch,
 	})
 	if err != nil {
-		return false, err
+		return nil, err
 	}
 	if len(prs) == 0 {
-		return false, nil
+		return nil, nil
 	}
-	pr := prs[0]
+	return prs[0], nil
+}
+
+// isPRMergedOrClosed checks whether the PR for a DevTask has been merged or closed.
+func isPRMergedOrClosed(ctx context.Context, c client.Client, task *devpipelinev1alpha1.DevTask) (bool, error) {
+	pr, err := findPRForTask(ctx, c, task)
+	if err != nil || pr == nil {
+		return false, err
+	}
 	return pr.GetMerged() || pr.GetState() == "closed", nil
 }
 

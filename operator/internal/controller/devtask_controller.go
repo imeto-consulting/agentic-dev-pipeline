@@ -93,6 +93,19 @@ func (r *DevTaskReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 				return ctrl.Result{RequeueAfter: 30 * time.Second}, r.Status().Update(ctx, task)
 			}
 		case corev1.PodSucceeded:
+			// Pod exited 0 doesn't guarantee a PR exists — claude -p frequently
+			// returns 0 even when the final gh pr create failed. Verify the PR is
+			// real before transitioning to AwaitingReview.
+			pr, err := findPRForTask(ctx, r.Client, task)
+			if err != nil {
+				return ctrl.Result{RequeueAfter: 30 * time.Second}, err
+			}
+			if pr == nil {
+				task.Status.Phase = devpipelinev1alpha1.PhaseFailed
+				task.Status.Message = "agent pod exited 0 but no PR was opened on the canonical branch"
+				return ctrl.Result{}, r.Status().Update(ctx, task)
+			}
+			task.Status.PRNumber = pr.GetNumber()
 			task.Status.Phase = devpipelinev1alpha1.PhaseAwaitingReview
 			task.Status.Message = "agent completed"
 			return ctrl.Result{RequeueAfter: 2 * time.Minute}, r.Status().Update(ctx, task)
