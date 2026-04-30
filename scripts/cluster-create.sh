@@ -13,12 +13,11 @@ k3d cluster create "${CLUSTER_NAME}" \
   --k3s-arg "--flannel-backend=none@server:*" \
   --k3s-arg "--disable-network-policy@server:*"
 
-kubectl wait --for=condition=Ready nodes --all --timeout=120s
-
-echo "Installing Calico CNI..."
+echo "Installing Calico CNI (nodes will be NotReady until this is up)..."
 kubectl apply -f https://raw.githubusercontent.com/projectcalico/calico/v3.27.0/manifests/calico.yaml
 
-kubectl wait --for=condition=Ready nodes --all --timeout=180s
+echo "Waiting for nodes to become Ready..."
+kubectl wait --for=condition=Ready nodes --all --timeout=300s
 
 echo "Cluster ready. Registry at localhost:${REGISTRY_PORT}"
 echo "To create the system namespace and install CRDs:"

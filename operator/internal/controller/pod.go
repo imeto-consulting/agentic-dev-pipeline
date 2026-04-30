@@ -62,18 +62,24 @@ func buildAgentPrompt(task *devpipelinev1alpha1.DevTask) string {
 			"   `git restore .mcp.json 2>/dev/null || true && git add -A`\n"+
 			"5. Commit with Signed-off-by: `git commit -s -m \"fix: <one-line description of what you changed>\"`\n"+
 			"6. Push: `git push -u origin claude/issue-%d`\n"+
-			"7. Create PR (CAPTURE the URL — do not use a placeholder):\n"+
-			"   `PR_URL=$(gh pr create --base main \\\n"+
-			"     --title \"fix: <one-line description>\" \\\n"+
-			"     --body \"## Summary\\n\\nCloses #%d\\n\\n## Changes\\n\\n- <what changed and why>\\n\\n## Test plan\\n\\n- [ ] Existing tests pass\") \\\n"+
-			"   && echo \"PR: $PR_URL\"`\n"+
-			"8. Comment PR URL on issue (skip if already commented):\n"+
-			"   `gh issue view %d -R %s --json comments --jq '.[].body' | grep -qF 'PR: http' \\\n"+
+			"7. Use the Write tool (not Bash heredoc — heredocs corrupt under the agent's bash wrapper) to create /tmp/pr-body.md with this exact content, replacing the bullet with what you actually changed and using the real issue number:\n"+
+			"     ## Summary\n\n"+
+			"     Closes #%d\n\n"+
+			"     ## Changes\n\n"+
+			"     - <what changed and why>\n\n"+
+			"     ## Test plan\n\n"+
+			"     - [ ] Existing tests pass\n"+
+			"8. Create PR using --body-file and CAPTURE the URL (must start with https://):\n"+
+			"   `PR_URL=$(gh pr create --base main --title \"fix: <one-line description>\" --body-file /tmp/pr-body.md) && echo \"PR_URL=$PR_URL\"`\n"+
+			"   If PR_URL is empty or does not start with https://, STOP and retry — do NOT proceed to step 9.\n"+
+			"9. Comment PR URL on issue (skip if a real PR URL was already commented):\n"+
+			"   `gh issue view %d -R %s --json comments --jq '.[].body' | grep -qE 'PR: https://' \\\n"+
 			"   || gh issue comment %d -R %s --body \"PR: $PR_URL\"`\n\n"+
 			"Rules:\n"+
 			"- NEVER use placeholder text like '<description>' or '<url>' — always use real values\n"+
 			"- ALWAYS run git restore .mcp.json before git add -A\n"+
 			"- NEVER create a PR before committing\n"+
+			"- NEVER comment on the issue with an empty PR_URL — verify $PR_URL starts with https:// first\n"+
 			"- If tests are relevant, run them after committing (step 5.5): push anyway if minor failures\n"+
 			"- If blocked: commit WIP, push, open draft PR with --draft, comment '/clarification:' on issue\n"+
 			"- .devcontainer/ and .github/workflows/ are fair game if the issue explicitly targets them\n"+

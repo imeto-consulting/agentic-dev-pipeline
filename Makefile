@@ -1,4 +1,4 @@
-.PHONY: cluster install secrets run demo clean
+.PHONY: cluster install seed-image secrets run demo clean
 
 cluster:
 	./scripts/cluster-create.sh
@@ -7,19 +7,33 @@ install:
 	cd operator && make install
 	kubectl apply -k deploy/
 
+# Push the slaktforskning devcontainer image into the in-cluster registry.
+# Required before the first triage / agent run on a fresh cluster, because the
+# triage CronJob and operator-spawned agent pods both pull this image.
+# Re-runs envbuilder via scripts/test-envbuilder.sh if the image isn't cached
+# locally; otherwise just pushes the existing local image.
+seed-image:
+	@if docker image inspect localhost:5050/slaktforskning-devcontainer:latest >/dev/null 2>&1; then \
+		echo "Pushing cached devcontainer to in-cluster registry..."; \
+		docker push localhost:5050/slaktforskning-devcontainer:latest; \
+	else \
+		echo "No cached image — building via envbuilder (cold build: several minutes)..."; \
+		./scripts/test-envbuilder.sh; \
+	fi
+
 secrets:
 	@test -n "$(GITHUB_TOKEN)" || (echo "GITHUB_TOKEN not set" && exit 1)
 	@test -n "$(CLAUDE_TOKEN)" || (echo "CLAUDE_TOKEN not set" && exit 1)
 	@test -n "$(GIT_AUTHOR_NAME)" || (echo "GIT_AUTHOR_NAME not set" && exit 1)
 	@test -n "$(GIT_AUTHOR_EMAIL)" || (echo "GIT_AUTHOR_EMAIL not set" && exit 1)
-	kubectl create secret generic pipeline-creds \
+	@kubectl create secret generic pipeline-creds \
 		--namespace devpipeline-system \
 		--from-literal=github-token="$(GITHUB_TOKEN)" \
 		--from-literal=claude-token="$(CLAUDE_TOKEN)" \
 		--from-literal=git-author-name="$(GIT_AUTHOR_NAME)" \
 		--from-literal=git-author-email="$(GIT_AUTHOR_EMAIL)" \
 		--dry-run=client -o yaml | kubectl apply -f -
-	kubectl create secret generic pipeline-creds \
+	@kubectl create secret generic pipeline-creds \
 		--namespace agentic-dev-pipeline-triage \
 		--from-literal=github-token="$(GITHUB_TOKEN)" \
 		--from-literal=claude-token="$(CLAUDE_TOKEN)" \
