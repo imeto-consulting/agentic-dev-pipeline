@@ -60,23 +60,21 @@ func buildAgentPrompt(task *devpipelinev1alpha1.DevTask) string {
 			"3. Implement the fix described in the issue body. Make ALL file changes now.\n"+
 			"4. Stage (restore pipeline-internal files first so they are not committed as deleted):\n"+
 			"   `git restore .mcp.json 2>/dev/null || true && git add -A`\n"+
-			"5. Commit with Signed-off-by, using SEPARATE -m flags for title and body paragraphs (each -m becomes its own paragraph; no heredocs, no multi-line strings):\n"+
-			"   `git commit -s \\\n"+
-			"     -m \"fix: <one-line description of what you changed>\" \\\n"+
-			"     -m \"Closes #%d\" \\\n"+
-			"     -m \"Changes: <what changed and why, one short sentence>\" \\\n"+
-			"     -m \"Test plan: <what to verify>\"`\n"+
+			"5. Commit with Signed-off-by, using SEPARATE -m flags on a SINGLE LINE — each -m becomes its own paragraph. The first -m is the PR title; the rest become the PR body:\n"+
+			"   `git commit -s -m \"fix: <one-line description of what you changed>\" -m \"Closes #%d\" -m \"Changes: <what changed and why, one short sentence>\" -m \"Test plan: <what to verify>\"`\n"+
 			"6. Push: `git push -u origin claude/issue-%d`\n"+
-			"7. Create PR — use --fill-first so the PR title/body come from the commit message you just made. CAPTURE the URL (must start with https://):\n"+
+			"7. Create PR — use --fill-first so the PR title/body come from the commit message you just made. CAPTURE the URL on a single line (must start with https://):\n"+
 			"   `PR_URL=$(gh pr create --base main --fill-first) && echo \"PR_URL=$PR_URL\"`\n"+
 			"   If PR_URL is empty or does not start with https://, STOP and retry step 7 — do NOT proceed to step 8.\n"+
-			"8. Comment PR URL on issue (skip if a real PR URL was already commented):\n"+
+			"8. Comment PR URL on issue (single-line; skip if a real PR URL was already commented):\n"+
 			"   `if ! gh issue view %d -R %s --json comments --jq '.comments[].body' | grep -qE 'PR: https://'; then gh issue comment %d -R %s --body \"PR: $PR_URL\"; fi`\n\n"+
+			"CRITICAL bash invariants — break these and the run fails:\n"+
+			"- Every Bash command MUST fit on a SINGLE LINE. The headless bash wrapper inserts a literal '\\n' arg at every line continuation, so multi-line commands corrupt into things like `git commit -s \\n -m ...` where `\\n` becomes a pathspec/positional arg.\n"+
+			"- NEVER use heredocs (`cat <<EOF`), backslash-newline continuations, or multi-line `--body \"...\"`. Use multiple -m flags for the commit body and `gh pr create --fill-first` for the PR body.\n\n"+
 			"Rules:\n"+
 			"- NEVER use placeholder text like '<description>' or '<url>' — always use real values\n"+
 			"- ALWAYS run git restore .mcp.json before git add -A\n"+
 			"- NEVER create a PR before committing\n"+
-			"- NEVER use heredocs (cat <<EOF) or multi-line `--body \"...\"` — they corrupt under the agent's bash wrapper. Use multiple -m flags for the commit body and `gh pr create --fill-first`.\n"+
 			"- NEVER comment on the issue with an empty PR_URL — verify $PR_URL starts with https:// first\n"+
 			"- If tests are relevant, run them after committing (step 5.5): push anyway if minor failures\n"+
 			"- If blocked: commit WIP, push, open draft PR with --draft, comment '/clarification:' on issue\n"+
