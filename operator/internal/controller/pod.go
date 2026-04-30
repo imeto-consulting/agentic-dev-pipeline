@@ -60,25 +60,23 @@ func buildAgentPrompt(task *devpipelinev1alpha1.DevTask) string {
 			"3. Implement the fix described in the issue body. Make ALL file changes now.\n"+
 			"4. Stage (restore pipeline-internal files first so they are not committed as deleted):\n"+
 			"   `git restore .mcp.json 2>/dev/null || true && git add -A`\n"+
-			"5. Commit with Signed-off-by: `git commit -s -m \"fix: <one-line description of what you changed>\"`\n"+
+			"5. Commit with Signed-off-by, using SEPARATE -m flags for title and body paragraphs (each -m becomes its own paragraph; no heredocs, no multi-line strings):\n"+
+			"   `git commit -s \\\n"+
+			"     -m \"fix: <one-line description of what you changed>\" \\\n"+
+			"     -m \"Closes #%d\" \\\n"+
+			"     -m \"Changes: <what changed and why, one short sentence>\" \\\n"+
+			"     -m \"Test plan: <what to verify>\"`\n"+
 			"6. Push: `git push -u origin claude/issue-%d`\n"+
-			"7. Use the Write tool (not Bash heredoc — heredocs corrupt under the agent's bash wrapper) to create /tmp/pr-body.md with this exact content, replacing the bullet with what you actually changed and using the real issue number:\n"+
-			"     ## Summary\n\n"+
-			"     Closes #%d\n\n"+
-			"     ## Changes\n\n"+
-			"     - <what changed and why>\n\n"+
-			"     ## Test plan\n\n"+
-			"     - [ ] Existing tests pass\n"+
-			"8. Create PR using --body-file and CAPTURE the URL (must start with https://):\n"+
-			"   `PR_URL=$(gh pr create --base main --title \"fix: <one-line description>\" --body-file /tmp/pr-body.md) && echo \"PR_URL=$PR_URL\"`\n"+
-			"   If PR_URL is empty or does not start with https://, STOP and retry — do NOT proceed to step 9.\n"+
-			"9. Comment PR URL on issue (skip if a real PR URL was already commented):\n"+
-			"   `gh issue view %d -R %s --json comments --jq '.[].body' | grep -qE 'PR: https://' \\\n"+
-			"   || gh issue comment %d -R %s --body \"PR: $PR_URL\"`\n\n"+
+			"7. Create PR — use --fill-first so the PR title/body come from the commit message you just made. CAPTURE the URL (must start with https://):\n"+
+			"   `PR_URL=$(gh pr create --base main --fill-first) && echo \"PR_URL=$PR_URL\"`\n"+
+			"   If PR_URL is empty or does not start with https://, STOP and retry step 7 — do NOT proceed to step 8.\n"+
+			"8. Comment PR URL on issue (skip if a real PR URL was already commented):\n"+
+			"   `if ! gh issue view %d -R %s --json comments --jq '.comments[].body' | grep -qE 'PR: https://'; then gh issue comment %d -R %s --body \"PR: $PR_URL\"; fi`\n\n"+
 			"Rules:\n"+
 			"- NEVER use placeholder text like '<description>' or '<url>' — always use real values\n"+
 			"- ALWAYS run git restore .mcp.json before git add -A\n"+
 			"- NEVER create a PR before committing\n"+
+			"- NEVER use heredocs (cat <<EOF) or multi-line `--body \"...\"` — they corrupt under the agent's bash wrapper. Use multiple -m flags for the commit body and `gh pr create --fill-first`.\n"+
 			"- NEVER comment on the issue with an empty PR_URL — verify $PR_URL starts with https:// first\n"+
 			"- If tests are relevant, run them after committing (step 5.5): push anyway if minor failures\n"+
 			"- If blocked: commit WIP, push, open draft PR with --draft, comment '/clarification:' on issue\n"+
