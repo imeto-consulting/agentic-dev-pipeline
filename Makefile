@@ -1,4 +1,4 @@
-.PHONY: cluster install seed-image secrets run demo clean
+.PHONY: cluster install seed-image secrets run triage demo clean
 
 cluster:
 	./scripts/cluster-create.sh
@@ -41,6 +41,14 @@ secrets:
 
 run:
 	cd operator && make run
+
+# Trigger a one-off triage run immediately, instead of waiting for the next
+# scheduled CronJob fire (every 5 minutes). The job name is timestamped so it
+# never conflicts with previous runs.
+triage:
+	$(eval JOB := triage-manual-$(shell date +%s))
+	kubectl create job --from=cronjob/triage-agent $(JOB) -n agentic-dev-pipeline-triage
+	kubectl logs -n agentic-dev-pipeline-triage job/$(JOB) --follow
 
 demo:
 	@echo "Filing a demo issue on jonaseck2/slaktforskning..."
