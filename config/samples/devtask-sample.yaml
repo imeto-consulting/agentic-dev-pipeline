@@ -1,10 +1,12 @@
 apiVersion: devpipeline.devpipeline.local/v1alpha1
 kind: DevTask
 metadata:
-  name: slaktforskning-test
+  name: example-task
   namespace: devpipeline-system
 spec:
-  # Replace issueNumber with a real open issue on jonaseck2/slaktforskning
-  # that has a ready-for-development label and an implementation plan in the body.
-  issueNumber: 12
-  repo: jonaseck2/slaktforskning
+  # Replace `issueNumber` with a real open issue on the target repo and `repo`
+  # with the same `owner/name` you set as TARGET_REPO in .pipeline.env.
+  # The issue should have a `ready-for-development` label and an implementation
+  # plan in the body (or as a comment from the triage agent).
+  issueNumber: 1
+  repo: owner/repo

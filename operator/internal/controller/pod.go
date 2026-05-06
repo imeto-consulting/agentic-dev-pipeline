@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
@@ -29,16 +30,22 @@ import (
 	devpipelinev1alpha1 "github.com/jonaseck2/agentic-dev-pipeline/operator/api/v1alpha1"
 )
 
-const (
-	// Use the pre-built devcontainer image directly rather than running envbuilder on every
-	// task start. Envbuilder's postCreateCommand (npm install + Playwright browser download)
-	// adds ~600 MiB of downloads and consistently OOMKills the pod. The cached image already
-	// has claude, git, gh, and all system packages installed.
-	// In-cluster registry (internal port 5000); host-side is localhost:5050.
-	agentImage   = "slaktforskning-registry:5000/slaktforskning-devcontainer:latest"
-	agentPodName = "agent"
-	registryBase = "slaktforskning-registry:5000"
-)
+const agentPodName = "agent"
+
+// agentImage is the pre-built devcontainer image the agent pod runs. We use it directly
+// rather than running envbuilder on every task start: envbuilder's postCreateCommand
+// (npm install + Playwright browser download) adds ~600 MiB of downloads and consistently
+// OOMKills the pod. The cached image already has claude, git, gh, and all system packages
+// installed. In-cluster registry uses internal port 5000; host-side is localhost:5050.
+//
+// Configured via the AGENT_IMAGE env var (set by `make run` from .pipeline.env).
+func agentImage() string {
+	if v := os.Getenv("AGENT_IMAGE"); v != "" {
+		return v
+	}
+	return "localhost:5000/devcontainer:latest"
+}
+
 
 func int64Ptr(i int64) *int64 { return &i }
 func boolPtr(b bool) *bool    { return &b }
@@ -161,7 +168,7 @@ func agentPod(task *devpipelinev1alpha1.DevTask, githubToken, claudeToken string
 			}},
 			Containers: []corev1.Container{{
 				Name:    "agent",
-				Image:   agentImage,
+				Image:   agentImage(),
 				Command: []string{"/bin/bash", "/tmp/run-agent.sh"},
 				SecurityContext: &corev1.SecurityContext{
 					AllowPrivilegeEscalation: boolPtr(false),

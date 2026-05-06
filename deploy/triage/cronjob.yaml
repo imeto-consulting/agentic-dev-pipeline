@@ -38,7 +38,7 @@ spec:
 
                 # List open needs-triage issues
                 ISSUES=$(gh issue list \
-                  --repo jonaseck2/slaktforskning \
+                  --repo ${TARGET_REPO} \
                   --label needs-triage \
                   --state open \
                   --json number \
@@ -68,7 +68,7 @@ spec:
               mountPath: /tmp
           containers:
           - name: triage
-            image: slaktforskning-registry:5000/slaktforskning-devcontainer:latest
+            image: ${REGISTRY_NAME}:5000/${DEVCONTAINER_IMAGE}:latest
             command: ["/bin/bash", "/tmp/triage.sh"]
             securityContext:
               allowPrivilegeEscalation: false
