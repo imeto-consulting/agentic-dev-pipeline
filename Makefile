@@ -23,21 +23,43 @@ seed-image:
 
 secrets:
 	@test -n "$(GITHUB_TOKEN)" || (echo "GITHUB_TOKEN not set" && exit 1)
-	@test -n "$(CLAUDE_TOKEN)" || (echo "CLAUDE_TOKEN not set" && exit 1)
 	@test -n "$(GIT_AUTHOR_NAME)" || (echo "GIT_AUTHOR_NAME not set" && exit 1)
 	@test -n "$(GIT_AUTHOR_EMAIL)" || (echo "GIT_AUTHOR_EMAIL not set" && exit 1)
-	@kubectl create secret generic pipeline-creds \
-		--namespace devpipeline-system \
-		--from-literal=github-token="$(GITHUB_TOKEN)" \
-		--from-literal=claude-token="$(CLAUDE_TOKEN)" \
-		--from-literal=git-author-name="$(GIT_AUTHOR_NAME)" \
-		--from-literal=git-author-email="$(GIT_AUTHOR_EMAIL)" \
-		--dry-run=client -o yaml | kubectl apply -f -
-	@kubectl create secret generic pipeline-creds \
-		--namespace agentic-dev-pipeline-triage \
-		--from-literal=github-token="$(GITHUB_TOKEN)" \
-		--from-literal=claude-token="$(CLAUDE_TOKEN)" \
-		--dry-run=client -o yaml | kubectl apply -f -
+	@if [ -n "$(CLAUDE_OAUTH_TOKEN)" ]; then \
+		echo "Auth mode: subscription (OAuth token)"; \
+		kubectl create secret generic pipeline-creds \
+			--namespace devpipeline-system \
+			--from-literal=github-token="$(GITHUB_TOKEN)" \
+			--from-literal=claude-token="$(CLAUDE_OAUTH_TOKEN)" \
+			--from-literal=claude-auth-mode="oauth" \
+			--from-literal=git-author-name="$(GIT_AUTHOR_NAME)" \
+			--from-literal=git-author-email="$(GIT_AUTHOR_EMAIL)" \
+			--dry-run=client -o yaml | kubectl apply -f -; \
+		kubectl create secret generic pipeline-creds \
+			--namespace agentic-dev-pipeline-triage \
+			--from-literal=github-token="$(GITHUB_TOKEN)" \
+			--from-literal=claude-token="$(CLAUDE_OAUTH_TOKEN)" \
+			--from-literal=claude-auth-mode="oauth" \
+			--dry-run=client -o yaml | kubectl apply -f -; \
+	elif [ -n "$(CLAUDE_TOKEN)" ]; then \
+		echo "Auth mode: API key"; \
+		kubectl create secret generic pipeline-creds \
+			--namespace devpipeline-system \
+			--from-literal=github-token="$(GITHUB_TOKEN)" \
+			--from-literal=claude-token="$(CLAUDE_TOKEN)" \
+			--from-literal=claude-auth-mode="api" \
+			--from-literal=git-author-name="$(GIT_AUTHOR_NAME)" \
+			--from-literal=git-author-email="$(GIT_AUTHOR_EMAIL)" \
+			--dry-run=client -o yaml | kubectl apply -f -; \
+		kubectl create secret generic pipeline-creds \
+			--namespace agentic-dev-pipeline-triage \
+			--from-literal=github-token="$(GITHUB_TOKEN)" \
+			--from-literal=claude-token="$(CLAUDE_TOKEN)" \
+			--from-literal=claude-auth-mode="api" \
+			--dry-run=client -o yaml | kubectl apply -f -; \
+	else \
+		echo "Error: set either CLAUDE_OAUTH_TOKEN (subscription) or CLAUDE_TOKEN (API key)" && exit 1; \
+	fi
 
 run:
 	cd operator && make run

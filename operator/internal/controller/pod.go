@@ -106,6 +106,10 @@ func agentPod(task *devpipelinev1alpha1.DevTask, githubToken, claudeToken string
 	runScript := fmt.Sprintf(
 		"#!/bin/bash\nset -e\n"+
 			"export HOME=/home/node\n"+
+			// In oauth mode, unset ANTHROPIC_API_KEY so Claude Code uses CLAUDE_CODE_OAUTH_TOKEN
+			// (subscription billing) instead of API billing. Both env vars are sourced from the
+			// same secret key; the auth mode flag determines which one Claude Code reads.
+			"[ \"${CLAUDE_AUTH_MODE}\" = \"oauth\" ] && unset ANTHROPIC_API_KEY || true\n"+
 			// Set up git credential store so push works without token in the remote URL.
 			// echo expands ${GITHUB_PERSONAL_ACCESS_TOKEN} from the container environment at runtime.
 			"git config --global credential.helper store\n"+
@@ -177,7 +181,11 @@ func agentPod(task *devpipelinev1alpha1.DevTask, githubToken, claudeToken string
 					{Name: "GITHUB_PERSONAL_ACCESS_TOKEN", ValueFrom: secretRef(task, "github-token")},
 					{Name: "GITHUB_TOKEN", ValueFrom: secretRef(task, "github-token")},
 					{Name: "CLAUDE_CODE_OAUTH_TOKEN", ValueFrom: secretRef(task, "claude-token")},
+					// Both ANTHROPIC_API_KEY and CLAUDE_CODE_OAUTH_TOKEN are populated from the same
+					// secret value. The run script unsets ANTHROPIC_API_KEY when CLAUDE_AUTH_MODE=oauth
+					// so Claude Code falls through to CLAUDE_CODE_OAUTH_TOKEN (subscription billing).
 					{Name: "ANTHROPIC_API_KEY", ValueFrom: secretRef(task, "claude-token")},
+					{Name: "CLAUDE_AUTH_MODE", ValueFrom: secretRef(task, "claude-auth-mode")},
 					{Name: "GIT_AUTHOR_NAME", ValueFrom: secretRef(task, "git-author-name")},
 					{Name: "GIT_AUTHOR_EMAIL", ValueFrom: secretRef(task, "git-author-email")},
 					{Name: "GIT_COMMITTER_NAME", ValueFrom: secretRef(task, "git-author-name")},

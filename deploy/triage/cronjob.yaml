@@ -36,6 +36,10 @@ spec:
                 set -e
                 export HOME=/home/node
 
+                # In oauth mode, unset ANTHROPIC_API_KEY so Claude Code uses
+                # CLAUDE_CODE_OAUTH_TOKEN (subscription billing) instead of API billing.
+                [ "${CLAUDE_AUTH_MODE}" = "oauth" ] && unset ANTHROPIC_API_KEY || true
+
                 # List open needs-triage issues
                 ISSUES=$(gh issue list \
                   --repo jonaseck2/slaktforskning \
@@ -96,6 +100,11 @@ spec:
                 secretKeyRef:
                   name: pipeline-creds
                   key: claude-token
+            - name: CLAUDE_AUTH_MODE
+              valueFrom:
+                secretKeyRef:
+                  name: pipeline-creds
+                  key: claude-auth-mode
             resources:
               requests:
                 memory: 512Mi
