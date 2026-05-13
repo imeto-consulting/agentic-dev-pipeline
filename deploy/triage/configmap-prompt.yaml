@@ -12,9 +12,12 @@ data:
     1. Read the issue:
        gh issue view ISSUE_NUMBER --repo ${TARGET_REPO}
 
-    2. Check if a triage comment already exists (idempotency guard):
-       EXISTING=$(gh issue view ISSUE_NUMBER --repo ${TARGET_REPO} --json comments --jq '[.[].body] | map(select(startswith("Implementation plan") or startswith("/clarification-needed"))) | length')
-       If EXISTING is greater than 0, exit immediately — this issue has already been triaged.
+    2. Idempotency guard: skip only if the LAST comment is from the agent itself (a previous
+       Implementation plan or /clarification-needed). If a human has responded after the
+       agent's clarification, re-process the issue with the new context.
+       LAST_BY_AGENT=$(gh issue view ISSUE_NUMBER --repo jonaseck2/slaktforskning --json comments --jq '(.comments | last | .body) // "" | startswith("Implementation plan") or startswith("/clarification-needed")')
+       If LAST_BY_AGENT is "true", exit immediately — the issue is waiting on the human.
+       If "false", continue: read all comments (including the human reply) when forming the plan.
 
     3. Read key repository files for context (use gh api — do NOT clone the repo):
        gh api repos/${TARGET_REPO}/contents/README.md --jq '.content' | base64 -d
