@@ -198,12 +198,14 @@ func main() {
 	}
 
 	// Start GitHub poller — auto-creates DevTask CRs for ready-for-development issues.
-	// Read target repos from PIPELINE_REPOS env var (comma-separated owner/repo pairs).
-	// Defaults to jonaseck2/slaktforskning for the POC.
-	repos := []string{"jonaseck2/slaktforskning"}
-	if r := os.Getenv("PIPELINE_REPOS"); r != "" {
-		repos = strings.Split(r, ",")
+	// Target repos come from the PIPELINE_REPOS env var (comma-separated owner/repo pairs).
+	// `make run` populates this from .pipeline.env automatically.
+	r := os.Getenv("PIPELINE_REPOS")
+	if r == "" {
+		setupLog.Error(nil, "PIPELINE_REPOS env var is required (comma-separated owner/repo pairs). Run via `make run` or set explicitly.")
+		os.Exit(1)
 	}
+	repos := strings.Split(r, ",")
 	ctx := ctrl.SetupSignalHandler()
 	controller.StartGitHubPoller(ctx, mgr.GetClient(), repos)
 

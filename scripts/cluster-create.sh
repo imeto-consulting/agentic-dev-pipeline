@@ -1,8 +1,19 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-CLUSTER_NAME=slaktforskning-poc
-REGISTRY_NAME=slaktforskning-registry
+# Source pipeline config from project root.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(dirname "${SCRIPT_DIR}")"
+
+if [ ! -f "${ROOT_DIR}/.pipeline.env" ]; then
+  echo "Error: ${ROOT_DIR}/.pipeline.env not found. Run 'make init' first." >&2
+  exit 1
+fi
+# shellcheck source=/dev/null
+. "${ROOT_DIR}/.pipeline.env"
+
+: "${CLUSTER_NAME:?CLUSTER_NAME not set in .pipeline.env}"
+: "${REGISTRY_NAME:?REGISTRY_NAME not set in .pipeline.env}"
 REGISTRY_PORT=5050
 
 echo "Creating k3d cluster: ${CLUSTER_NAME}"
@@ -20,6 +31,4 @@ echo "Waiting for nodes to become Ready..."
 kubectl wait --for=condition=Ready nodes --all --timeout=300s
 
 echo "Cluster ready. Registry at localhost:${REGISTRY_PORT}"
-echo "To create the system namespace and install CRDs:"
-echo "  kubectl create namespace devpipeline-system --dry-run=client -o yaml | kubectl apply -f -"
-echo "  cd operator && make install"
+echo "Next: make seed-image && make secrets && make install && make run"

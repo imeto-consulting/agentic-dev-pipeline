@@ -36,9 +36,13 @@ spec:
                 set -e
                 export HOME=/home/node
 
+                # In oauth mode, unset ANTHROPIC_API_KEY so Claude Code uses
+                # CLAUDE_CODE_OAUTH_TOKEN (subscription billing) instead of API billing.
+                [ "${CLAUDE_AUTH_MODE}" = "oauth" ] && unset ANTHROPIC_API_KEY || true
+
                 # List open needs-triage issues
                 ISSUES=$(gh issue list \
-                  --repo jonaseck2/slaktforskning \
+                  --repo ${TARGET_REPO} \
                   --label needs-triage \
                   --state open \
                   --json number \
@@ -68,7 +72,7 @@ spec:
               mountPath: /tmp
           containers:
           - name: triage
-            image: slaktforskning-registry:5000/slaktforskning-devcontainer:latest
+            image: ${REGISTRY_NAME}:5000/${DEVCONTAINER_IMAGE}:latest
             command: ["/bin/bash", "/tmp/triage.sh"]
             securityContext:
               allowPrivilegeEscalation: false
@@ -96,6 +100,11 @@ spec:
                 secretKeyRef:
                   name: pipeline-creds
                   key: claude-token
+            - name: CLAUDE_AUTH_MODE
+              valueFrom:
+                secretKeyRef:
+                  name: pipeline-creds
+                  key: claude-auth-mode
             resources:
               requests:
                 memory: 512Mi
