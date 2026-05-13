@@ -136,18 +136,23 @@ func findPRForTask(ctx context.Context, c client.Client, task *devpipelinev1alph
 		return pr, nil
 	}
 
-	branch := fmt.Sprintf("claude/issue-%d", task.Spec.IssueNumber)
+	// Branch names are either claude/issue-N (legacy) or claude/issue-N-some-slug (current).
+	// List open PRs and prefix-match on the issue number so a slug change doesn't break detection.
+	prefix := fmt.Sprintf("claude/issue-%d-", task.Spec.IssueNumber)
+	legacy := fmt.Sprintf("claude/issue-%d", task.Spec.IssueNumber)
 	prs, _, err := ghClient.PullRequests.List(ctx, parts[0], parts[1], &gh.PullRequestListOptions{
-		State: "all",
-		Head:  parts[0] + ":" + branch,
+		State: "open",
 	})
 	if err != nil {
 		return nil, err
 	}
-	if len(prs) == 0 {
-		return nil, nil
+	for _, pr := range prs {
+		ref := pr.GetHead().GetRef()
+		if strings.HasPrefix(ref, prefix) || ref == legacy {
+			return pr, nil
+		}
 	}
-	return prs[0], nil
+	return nil, nil
 }
 
 // isPRMergedOrClosed checks whether the PR for a DevTask has been merged or closed.
