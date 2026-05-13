@@ -63,13 +63,13 @@ func buildAgentPrompt(task *devpipelinev1alpha1.DevTask) string {
 		"You are working on GitHub issue #%d in %s.\n\n"+
 			"Steps (in order):\n"+
 			"1. Read the issue: `gh issue view %d -R %s`\n"+
-			"2. Create or check out branch: `git checkout -b claude/issue-%d 2>/dev/null || git checkout claude/issue-%d`\n"+
+			"2. The wrapper script may have already checked out an existing branch for this issue. Verify with `git branch --show-current`. If the output starts with `claude/issue-%d`, you are set — proceed to step 3. Otherwise create a new branch with a slug from the issue title on a SINGLE LINE: `SLUG=$(gh issue view %d -R %s --json title --jq '.title | ascii_downcase | gsub(\"[^a-z0-9]+\"; \"-\") | ltrimstr(\"-\") | rtrimstr(\"-\") | .[0:40]') && git checkout -b \"claude/issue-%d-${SLUG}\"`\n"+
 			"3. Implement the fix described in the issue body. Make ALL file changes now.\n"+
 			"4. Stage (restore pipeline-internal files first so they are not committed as deleted):\n"+
 			"   `git restore .mcp.json 2>/dev/null || true && git add -A`\n"+
 			"5. Commit with Signed-off-by, using SEPARATE -m flags on a SINGLE LINE — each -m becomes its own paragraph. The first -m is the PR title; the rest become the PR body:\n"+
 			"   `git commit -s -m \"fix: <one-line description of what you changed>\" -m \"Closes #%d\" -m \"Changes: <what changed and why, one short sentence>\" -m \"Test plan: <what to verify>\"`\n"+
-			"6. Push: `git push -u origin claude/issue-%d`\n"+
+			"6. Push: `git push -u origin HEAD`\n"+
 			"7. Create PR — use --fill-first so the PR title/body come from the commit message you just made. Run on a single line:\n"+
 			"   `gh pr create --base main --fill-first`\n"+
 			"   You're done after this step. The operator detects the PR by branch name and posts the PR URL on the issue itself — do NOT comment on the issue from the agent.\n\n"+
@@ -87,8 +87,7 @@ func buildAgentPrompt(task *devpipelinev1alpha1.DevTask) string {
 			"- Use Bash for all git/gh commands. GITHUB_TOKEN is pre-set.",
 		task.Spec.IssueNumber, task.Spec.Repo,
 		task.Spec.IssueNumber, task.Spec.Repo,
-		task.Spec.IssueNumber, task.Spec.IssueNumber,
-		task.Spec.IssueNumber,
+		task.Spec.IssueNumber, task.Spec.IssueNumber, task.Spec.Repo, task.Spec.IssueNumber,
 		task.Spec.IssueNumber,
 	)
 }
@@ -113,6 +112,10 @@ func agentPod(task *devpipelinev1alpha1.DevTask, githubToken, claudeToken string
 	runScript := fmt.Sprintf(
 		"#!/bin/bash\nset -e\n"+
 			"export HOME=/home/node\n"+
+			// In oauth mode, unset ANTHROPIC_API_KEY so Claude Code uses CLAUDE_CODE_OAUTH_TOKEN
+			// (subscription billing) instead of API billing. Both env vars are sourced from the
+			// same secret key; the auth mode flag determines which one Claude Code reads.
+			"[ \"${CLAUDE_AUTH_MODE}\" = \"oauth\" ] && unset ANTHROPIC_API_KEY || true\n"+
 			// Set up git credential store so push works without token in the remote URL.
 			// echo expands ${GITHUB_PERSONAL_ACCESS_TOKEN} from the container environment at runtime.
 			"git config --global credential.helper store\n"+
@@ -122,6 +125,10 @@ func agentPod(task *devpipelinev1alpha1.DevTask, githubToken, claudeToken string
 			"git config --global user.email \"${GIT_AUTHOR_EMAIL}\"\n"+
 			"git clone https://github.com/%s /workspaces/%s\n"+
 			"cd /workspaces/%s\n"+
+			// Pre-checkout: if a branch matching `claude/issue-N` (legacy) or `claude/issue-N-*` (slug)
+			// already exists on the remote, check it out so the agent continues on the same branch.
+			// Protects against creating a duplicate branch when the issue title (slug) changes.
+			"EXISTING_BRANCH=$(git ls-remote --heads origin \"claude/issue-%d\" \"claude/issue-%d-*\" 2>/dev/null | head -1 | awk '{print $2}' | sed 's|refs/heads/||'); [ -n \"$EXISTING_BRANCH\" ] && git checkout \"$EXISTING_BRANCH\" || true\n"+
 			// Remove .mcp.json so claude does not try to spawn Node.js MCP servers,
 			// which get OOMKilled due to Docker VM swap exhaustion. gh CLI covers all
 			// GitHub operations we need (gh issue view, gh pr create, gh issue comment).
@@ -129,7 +136,9 @@ func agentPod(task *devpipelinev1alpha1.DevTask, githubToken, claudeToken string
 			"claude -p %q "+
 			"--allowedTools 'Read,Edit,Write,Bash' "+
 			"--dangerously-skip-permissions --output-format json > /tmp/claude-output.json",
-		repo, task.Spec.Repo, repo, repo, prompt,
+		repo, task.Spec.Repo, repo, repo,
+		task.Spec.IssueNumber, task.Spec.IssueNumber,
+		prompt,
 	)
 
 	return &corev1.Pod{
@@ -184,7 +193,11 @@ func agentPod(task *devpipelinev1alpha1.DevTask, githubToken, claudeToken string
 					{Name: "GITHUB_PERSONAL_ACCESS_TOKEN", ValueFrom: secretRef(task, "github-token")},
 					{Name: "GITHUB_TOKEN", ValueFrom: secretRef(task, "github-token")},
 					{Name: "CLAUDE_CODE_OAUTH_TOKEN", ValueFrom: secretRef(task, "claude-token")},
+					// Both ANTHROPIC_API_KEY and CLAUDE_CODE_OAUTH_TOKEN are populated from the same
+					// secret value. The run script unsets ANTHROPIC_API_KEY when CLAUDE_AUTH_MODE=oauth
+					// so Claude Code falls through to CLAUDE_CODE_OAUTH_TOKEN (subscription billing).
 					{Name: "ANTHROPIC_API_KEY", ValueFrom: secretRef(task, "claude-token")},
+					{Name: "CLAUDE_AUTH_MODE", ValueFrom: secretRef(task, "claude-auth-mode")},
 					{Name: "GIT_AUTHOR_NAME", ValueFrom: secretRef(task, "git-author-name")},
 					{Name: "GIT_AUTHOR_EMAIL", ValueFrom: secretRef(task, "git-author-email")},
 					{Name: "GIT_COMMITTER_NAME", ValueFrom: secretRef(task, "git-author-name")},
@@ -218,7 +231,7 @@ func agentPodResume(task *devpipelinev1alpha1.DevTask) *corev1.Pod {
 			"4. Stage (restore pipeline-internal files first so they are not committed as deleted):\n"+
 			"   `git restore .mcp.json 2>/dev/null || true && git add -A`\n"+
 			"5. Commit: `git commit -s -m \"fix: <one-line description>\"`\n"+
-			"6. Push: `git push -u origin claude/issue-%d`\n"+
+			"6. Push: `git push -u origin HEAD`\n"+
 			"7. If the PR is not yet open:\n"+
 			"   `PR_URL=$(gh pr create --base main \\\n"+
 			"     --title \"fix: <one-line description>\" \\\n"+
@@ -236,7 +249,6 @@ func agentPodResume(task *devpipelinev1alpha1.DevTask) *corev1.Pod {
 		task.Spec.IssueNumber,
 		task.Spec.IssueNumber,
 		task.Spec.IssueNumber, task.Spec.Repo,
-		task.Spec.IssueNumber,
 		task.Spec.IssueNumber,
 		task.Spec.IssueNumber, task.Spec.Repo,
 		task.Spec.IssueNumber, task.Spec.Repo,

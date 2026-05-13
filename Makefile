@@ -122,7 +122,9 @@ run: check-config
 		AGENT_IMAGE="$(REGISTRY_NAME):5000/$(DEVCONTAINER_IMAGE):latest" \
 		make run
 
-# Trigger a one-off triage run instead of waiting for the next scheduled fire.
+# Trigger a one-off triage run immediately, instead of waiting for the next
+# scheduled CronJob fire (every 5 minutes). The job name is timestamped so it
+# never conflicts with previous runs.
 triage:
 	$(eval JOB := triage-manual-$(shell date +%s))
 	kubectl create job --from=cronjob/triage-agent $(JOB) -n agentic-dev-pipeline-triage
