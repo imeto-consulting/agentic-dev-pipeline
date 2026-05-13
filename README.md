@@ -1,59 +1,53 @@
 # Agentic Development Pipeline — POC
 
-Claude as maintainer of [`slaktforskning`](https://github.com/jonaseck2/slaktforskning), running on a local k3d cluster.
+Claude as maintainer of any GitHub repository, running on a local k3d cluster.
 
 File an issue → triage agent writes an implementation plan → implementation agent opens a PR → merge → namespace cleaned up. No manual steps between filing and reviewing.
 
-## TL;DR — let Claude run the demo for you
+This repo is a **template**. You point it at your own target repo, run a few `make` commands, and the pipeline starts watching that repo for issues to work on.
 
-The fastest way to see this work is to ask Claude Code (in this repo) to run the
-whole demo. Open a session with `auto` mode in this repo and paste:
+## Bring-up
 
-> Run the agentic dev pipeline demo end-to-end. Create the k3d cluster if it
-> doesn't exist, install CRDs and components, seed the in-cluster registry with
-> the slaktforskning devcontainer image, create the secrets from my `~/.zshrc`
-> credentials and `gh auth token`, start the operator in the background, file a
-> demo issue, trigger the triage job, then watch until a PR is opened on
-> `jonaseck2/slaktforskning`. Fix any failures you hit and report the PR URL.
+**Prerequisites:** `brew install k3d kubectl kubebuilder helm go gh docker gettext`
 
-Claude will work through the steps below, retry on transient failures, and
-report the PR URL at the end. Watch its tool calls and intervene if you want
-to redirect.
-
-## Manual bring-up (if you'd rather drive it yourself)
-
-**Prerequisites:** `brew install k3d kubectl kubebuilder helm go gh docker`
+(`gettext` provides `envsubst`, used to render manifests.)
 
 ```bash
-# 1. Create cluster (k3d + Calico CNI)
+# 0. One-time: write your local config (target repo, cluster + registry names)
+make init
+
+# 1. Create the k3d cluster (k3d + Calico CNI)
 make cluster
 
-# 2. Install CRDs and pipeline components
-make install
-
-# 3. Seed the in-cluster registry with the slaktforskning devcontainer image.
-#    On a fresh cluster this is required before any triage or agent pod can
-#    start — they all pull this image.
+# 2. Seed the in-cluster registry with the devcontainer image. Required before
+#    any triage or agent pod can start — they all pull this image.
 make seed-image
 
-# 4. Set credentials and create the in-cluster Secret
-export GITHUB_TOKEN=$(gh auth token)            # or a fine-grained PAT
-export CLAUDE_TOKEN=$CLAUDE_CODE_OAUTH_TOKEN    # from your shell rc
+# 3. Set credentials and create the in-cluster secret
+export GITHUB_TOKEN=$(gh auth token)         # or a fine-grained PAT
+export CLAUDE_OAUTH_TOKEN="sk-ant-oat01-..." # subscription billing
+# OR (mutually exclusive):
+# export CLAUDE_TOKEN="sk-ant-..."           # API billing
 export GIT_AUTHOR_NAME="Your Name"
 export GIT_AUTHOR_EMAIL="you@example.com"
 make secrets
-```
 
-The fine-grained PAT (or `gh` token) needs: Contents Read+Write, Issues
-Read+Write, Pull Requests Read+Write on `jonaseck2/slaktforskning`.
+# 4. Install CRDs and pipeline components
+make install
 
-## Running the operator
-
-```bash
+# 5. Run the operator locally against the cluster
 make run
 ```
 
-Runs the operator locally against the cluster. Leave this terminal open.
+The fine-grained PAT (or `gh` token) needs Contents, Issues, and Pull Requests
+read+write on the target repo.
+
+## Auth modes
+
+- `CLAUDE_OAUTH_TOKEN` — your personal Claude Code subscription (Pro / Team). Recommended for local development so you don't burn API credits.
+- `CLAUDE_TOKEN` — pay-per-token API key. Recommended for shared CI/CD setups.
+
+`make secrets` rejects setups where both (or neither) is set.
 
 ## Demo
 
@@ -61,21 +55,24 @@ Runs the operator locally against the cluster. Leave this terminal open.
 make demo
 ```
 
-Files a real issue with `needs-triage` label. The triage CronJob picks it up
-within 5 minutes (or trigger immediately — see below), writes an implementation
-plan, and applies `ready-for-development`. The operator detects the label
-within 30 seconds and starts an agent pod to implement it.
+Files a real issue with the `needs-triage` label. The triage CronJob picks it
+up within 5 minutes (or run `make triage` to trigger immediately), writes an
+implementation plan, and applies `ready-for-development`. The operator detects
+the label within 30 seconds and starts an agent pod to implement it.
 
 ## Manual triage trigger
 
 ```bash
-kubectl create job --from=cronjob/triage-agent triage-manual \
-  -n agentic-dev-pipeline-triage
-kubectl logs -n agentic-dev-pipeline-triage job/triage-manual --follow
+make triage
 ```
+
+## Configuration
+
+All target-repo and infra naming lives in `.pipeline.env` (gitignored). Run
+`make init` to (re)generate it interactively, or copy `.pipeline.env.example`
+and edit by hand. `make check-config` validates that everything required is set
+before you spin up a cluster.
 
 ## Architecture
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) and [docs/plans/ROADMAP.md](docs/plans/ROADMAP.md).
-</content>
-</invoke>
