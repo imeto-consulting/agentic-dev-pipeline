@@ -32,6 +32,7 @@ const systemNamespace = "devpipeline-system"
 type pipelineCreds struct {
 	githubToken    string
 	claudeToken    string
+	claudeAuthMode string
 	gitAuthorName  string
 	gitAuthorEmail string
 }
@@ -50,6 +51,7 @@ func ensureTaskSecret(ctx context.Context, c client.Client, task *devpipelinev1a
 		StringData: map[string]string{
 			"github-token":     creds.githubToken,
 			"claude-token":     creds.claudeToken,
+			"claude-auth-mode": creds.claudeAuthMode,
 			"git-author-name":  creds.gitAuthorName,
 			"git-author-email": creds.gitAuthorEmail,
 		},
@@ -68,6 +70,7 @@ func readPipelineCredentials(ctx context.Context, c client.Client) (pipelineCred
 	return pipelineCreds{
 		githubToken:    string(secret.Data["github-token"]),
 		claudeToken:    string(secret.Data["claude-token"]),
+		claudeAuthMode: string(secret.Data["claude-auth-mode"]),
 		gitAuthorName:  string(secret.Data["git-author-name"]),
 		gitAuthorEmail: string(secret.Data["git-author-email"]),
 	}, nil
