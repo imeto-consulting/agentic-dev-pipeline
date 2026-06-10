@@ -42,6 +42,35 @@ make run
 The fine-grained PAT (or `gh` token) needs Contents, Issues, and Pull Requests
 read+write on the target repo.
 
+## GitHub App auth (recommended for public repos)
+
+Instead of mounting a long-lived PAT into every agent pod, the operator can
+authenticate as a **GitHub App installation**: it mints a short-lived (~1 hour)
+installation token per task and writes it into that task's namespace Secret. A
+token leaked from a prompt-injected agent then expires within the hour and is
+scoped to a single installation — a far smaller blast radius than a PAT.
+
+1. Register the App and install it on the target repo following
+   [docs/github-app-setup.md](docs/github-app-setup.md). Permissions are
+   codified in [config/github-app-manifest.json](config/github-app-manifest.json):
+   Contents RW, Issues RW, Pull requests RW, Metadata R — nothing else.
+2. Save the App ID, the installation ID, and the private-key PEM
+   (`chmod 600`), then set in `.pipeline.env` (or your shell):
+
+   ```bash
+   export GH_APP_ID=123456
+   export GH_INSTALLATION_ID=12345678
+   export GH_APP_PRIVATE_KEY_PATH=~/.config/agentic-dev-pipeline/github-app.pem
+   make secrets
+   ```
+
+`make secrets` creates a `pipeline-app-key` Secret. When it is present the
+operator uses minted installation tokens; when it is absent it falls back to
+`GITHUB_TOKEN`. **`GITHUB_TOKEN` is still required** — the triage CronJob reads
+it directly (triage minting its own token is a tracked follow-up), and it is the
+operator's fallback. Verify with `gh api /rate_limit` using a minted token: the
+identity shows the App, not a user.
+
 ## Auth modes
 
 - `CLAUDE_OAUTH_TOKEN` — your personal Claude Code subscription (Pro / Team). Recommended for local development so you don't burn API credits.

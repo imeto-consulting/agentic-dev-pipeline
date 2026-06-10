@@ -111,6 +111,22 @@ secrets: check-config
 	else \
 		echo "Error: set either CLAUDE_OAUTH_TOKEN (subscription) or CLAUDE_TOKEN (API key)" && exit 1; \
 	fi
+	@# Optional: GitHub App installation-token auth. When all three are set, the
+	@# operator mints ~1h tokens per task instead of using the long-lived PAT.
+	@# The PAT in pipeline-creds remains the triage CronJob's auth + a fallback.
+	@if [ -n "$(GH_APP_ID)" ] || [ -n "$(GH_INSTALLATION_ID)" ] || [ -n "$(GH_APP_PRIVATE_KEY_PATH)" ]; then \
+		test -n "$(GH_APP_ID)"               || (echo "GH_APP_ID not set"               && exit 1); \
+		test -n "$(GH_INSTALLATION_ID)"      || (echo "GH_INSTALLATION_ID not set"      && exit 1); \
+		test -n "$(GH_APP_PRIVATE_KEY_PATH)" || (echo "GH_APP_PRIVATE_KEY_PATH not set" && exit 1); \
+		test -f "$(GH_APP_PRIVATE_KEY_PATH)" || (echo "GH_APP_PRIVATE_KEY_PATH file not found: $(GH_APP_PRIVATE_KEY_PATH)" && exit 1); \
+		echo "GitHub App auth: minting installation tokens per task"; \
+		kubectl create secret generic pipeline-app-key \
+			--namespace devpipeline-system \
+			--from-literal=app-id="$(GH_APP_ID)" \
+			--from-literal=installation-id="$(GH_INSTALLATION_ID)" \
+			--from-file=private-key="$(GH_APP_PRIVATE_KEY_PATH)" \
+			--dry-run=client -o yaml | kubectl apply -f -; \
+	fi
 
 # ----------------------------------------------------------------------------
 # Operator

@@ -19,6 +19,8 @@ package controller
 import (
 	"context"
 	"fmt"
+	"strconv"
+	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -28,6 +30,8 @@ import (
 )
 
 const systemNamespace = "devpipeline-system"
+
+const appKeySecretName = "pipeline-app-key"
 
 type pipelineCreds struct {
 	githubToken    string
@@ -59,19 +63,49 @@ func ensureTaskSecret(ctx context.Context, c client.Client, task *devpipelinev1a
 	return client.IgnoreAlreadyExists(c.Create(ctx, secret))
 }
 
-// readPipelineCredentials reads credentials from the pipeline-creds Secret in devpipeline-system.
-// Falls back to operator env vars if the Secret does not exist.
+// readPipelineCredentials reads credentials from the pipeline-creds Secret in
+// devpipeline-system. If a pipeline-app-key Secret is also present, the GitHub
+// token is replaced with a freshly-minted (~1h TTL) GitHub App installation
+// token; otherwise the long-lived github-token from pipeline-creds is used.
 func readPipelineCredentials(ctx context.Context, c client.Client) (pipelineCreds, error) {
 	secret := &corev1.Secret{}
 	err := c.Get(ctx, client.ObjectKey{Namespace: systemNamespace, Name: "pipeline-creds"}, secret)
 	if err != nil {
 		return pipelineCreds{}, fmt.Errorf("read pipeline-creds secret: %w", err)
 	}
-	return pipelineCreds{
+	creds := pipelineCreds{
 		githubToken:    string(secret.Data["github-token"]),
 		claudeToken:    string(secret.Data["claude-token"]),
 		claudeAuthMode: string(secret.Data["claude-auth-mode"]),
 		gitAuthorName:  string(secret.Data["git-author-name"]),
 		gitAuthorEmail: string(secret.Data["git-author-email"]),
-	}, nil
+	}
+
+	// Prefer a GitHub App installation token when the app key is configured.
+	token, err := githubAppToken(ctx, c)
+	if err != nil {
+		return pipelineCreds{}, err
+	}
+	if token != "" {
+		creds.githubToken = token
+	}
+	return creds, nil
+}
+
+// githubAppToken mints an installation token if the pipeline-app-key Secret
+// exists and is complete. Returns ("", nil) when the Secret is absent (PAT
+// fallback). Returns an error only when the Secret is present but unusable.
+func githubAppToken(ctx context.Context, c client.Client) (string, error) {
+	appKey := &corev1.Secret{}
+	err := c.Get(ctx, client.ObjectKey{Namespace: systemNamespace, Name: appKeySecretName}, appKey)
+	if err != nil {
+		return "", client.IgnoreNotFound(err) // absent → PAT fallback
+	}
+	appID, aerr := strconv.ParseInt(strings.TrimSpace(string(appKey.Data["app-id"])), 10, 64)
+	instID, ierr := strconv.ParseInt(strings.TrimSpace(string(appKey.Data["installation-id"])), 10, 64)
+	pem := appKey.Data["private-key"]
+	if aerr != nil || ierr != nil || appID <= 0 || instID <= 0 || len(pem) == 0 {
+		return "", fmt.Errorf("%s secret present but incomplete (need app-id, installation-id, private-key)", appKeySecretName)
+	}
+	return installationToken(ctx, appID, instID, pem)
 }
