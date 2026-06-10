@@ -66,6 +66,29 @@ the label within 30 seconds and starts an agent pod to implement it.
 make triage
 ```
 
+## Reviewing plans
+
+The triage agent self-classifies each plan. If the plan it writes proposes
+touching sensitive surface — `.github/`, `.devcontainer/`, `Dockerfile`,
+`package.json`, `.mcp.json`, `deploy/`, `operator/`, or anything matching
+`secret` / `credential` / `token` / `apikey` — it labels the issue
+**`needs-plan-review`** instead of `ready-for-development`, and the operator
+does **not** spawn an impl agent.
+
+To act on a `needs-plan-review` issue: read the most recent `Implementation
+plan: …` comment, then either
+
+- relabel `needs-plan-review` → `ready-for-development` to let the impl agent
+  run (the operator picks it up within 30s), or
+- close the issue (or ask for changes) if the plan is unacceptable.
+
+This is the human checkpoint before any Claude tokens are spent on a
+potentially poisoned plan. It pairs with the operator's diff policy (which
+rejects the resulting PR if it actually touches restricted paths) — the label
+gate catches intent early, the diff policy catches it at the PR. On a public
+repo, treat issue text as untrusted and read these plans carefully.
+
+
 ## Configuration
 
 All target-repo and infra naming lives in `.pipeline.env` (gitignored). Run
