@@ -2,182 +2,192 @@
 
 ## System Overview
 
-Two components run in the cluster. One CRD. Per-task namespaces live for the duration of a task. That's the entire pipeline.
+Two long-lived components run in the cluster (an operator and a triage CronJob), one CRD (`DevTask`), and one ephemeral namespace per task. That's the entire pipeline. The target repo, cluster name, registry, and devcontainer image are configured per-deployment in `.pipeline.env` (see [Configuration](#configuration)); `jonaseck2/slaktforskning` is the default example used below.
 
-```
-           GitHub Issues                    (github.com)
-               │
-               │  polling every 30s (webhook in v2)
-               ▼
-┌──────────────────────────────────────────────────┐
-│  k3d cluster (laptop)                            │
-│                                                  │
-│  ┌─────────────────┐   ┌────────────────────┐    │
-│  │  triage         │   │  operator          │    │
-│  │  CronJob        │   │  (kubebuilder)     │    │
-│  │  every 5 min    │   │                    │    │
-│  │                 │   │  watches DevTask   │    │
-│  │  claude -p per  │   │  polls GitHub      │    │
-│  │  needs-triage   │   │  reconciles state  │    │
-│  │  issue          │   │                    │    │
-│  └────────┬────────┘   └──────────┬─────────┘    │
-│           │                       │              │
-│           │ labels ready-for-dev  │ creates      │
-│           ▼                       ▼              │
-│  ┌────────────────────────────────────────────┐  │
-│  │  GitHub API (issues, PRs, comments, labels)│  │
-│  └────────────────────────────────────────────┘  │
-│                           ▲                      │
-│                           │ MCP + git push        │
-│  ┌────────────────────────┴────────────────────┐  │
-│  │  namespace: devtask-<issue-number>          │  │
-│  │  ┌──────────────────────────────────────┐   │  │
-│  │  │  envbuilder pod                      │   │  │
-│  │  │  ├─ builds slaktforskning devcontainer│  │  │
-│  │  │  └─ runs: claude -p "<prompt>"       │   │  │
-│  │  └──────────────────────────────────────┘   │  │
-│  │  NetworkPolicy: deny-all egress             │  │
-│  │    + api.github.com                         │  │
-│  │    + api.anthropic.com                      │  │
-│  │    + kube-dns                               │  │
-│  │    + package registries (build phase)       │  │
-│  └─────────────────────────────────────────────┘  │
-│                                                  │
-│  Image cache: slaktforskning-registry:5000       │
-└──────────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+    gh["GitHub — Issues &amp; PRs (github.com)"]
+
+    subgraph cluster["k3d cluster · Calico CNI (NetworkPolicy enforcement)"]
+        direction TB
+        subgraph sys["namespace: devpipeline-system"]
+            operator["operator (kubebuilder)<br/>polls issues every 30s<br/>reconciles DevTask CRs"]
+            creds["Secret: pipeline-creds<br/>github + claude tokens, auth mode, git identity"]
+        end
+        subgraph triagens["namespace: agentic-dev-pipeline-triage"]
+            triage["triage CronJob — every 5 min<br/>claude -p per needs-triage issue"]
+        end
+        subgraph taskns["namespace: devtask-&lt;issue&gt; — one per task"]
+            agent["agent Pod<br/>pre-built devcontainer image<br/>runs claude -p"]
+            np["NetworkPolicy sandbox-egress<br/>deny-all ingress · DNS + HTTPS egress"]
+            tcreds["Secret: devtask-&lt;issue&gt;-creds"]
+        end
+        registry[("in-cluster registry :5000<br/>pre-built devcontainer image")]
+    end
+
+    gh -- "poll needs-triage" --> triage
+    triage -- "plan + labels<br/>(ready-for-development / needs-info)" --> gh
+    gh -- "poll ready-for-development" --> operator
+    operator -- "create ns + NetworkPolicy + Secret + Pod" --> taskns
+    registry -. "image pull" .-> agent
+    agent -- "git push · gh pr create" --> gh
+    operator -- "post PR link · watch PR state" --> gh
 ```
 
 ## Components
 
 ### DevTask CRD
 
-Minimal shape. Ticket reference, repo reference, status. The CR is derived state — the operator creates it when an issue hits `ready-for-development`, deletes it (and its namespace) when the PR merges or the task fails permanently.
+Minimal shape. Issue reference, repo reference, status. The CR is derived state — the GitHub poller creates it when an issue hits `ready-for-development`, and the operator deletes the task namespace when the PR merges or closes.
 
 ```yaml
-apiVersion: devpipeline.local/v1alpha1
+apiVersion: devpipeline.devpipeline.local/v1alpha1
 kind: DevTask
 metadata:
-  name: slaktforskning-42
+  name: slaktforskning-42          # <repo-name>-<issue-number>
   namespace: devpipeline-system
 spec:
   issueNumber: 42
   repo: jonaseck2/slaktforskning
 status:
-  phase: Pending | Building | Running | AwaitingReview | BlockedOnClarification | Failed | Completed
+  phase: Pending | Building | Running | AwaitingReview | AwaitingRevision | BlockedOnClarification | Failed | Completed
   namespace: devtask-42
   prNumber: 87
   startedAt: "2026-04-22T10:15:00Z"
   message: "..."
 ```
 
+`Pending` is defined in the phase enum but the reconciler transitions a freshly-created CR (empty phase) straight to `Building` — see the [state machine](#state-machine).
+
 ### Operator (kubebuilder)
 
-One Go binary. Three responsibilities:
+One Go binary, run with `make run`. Three responsibilities:
 
-1. **Polls GitHub** every 30s for issues labeled `ready-for-development`. Creates a `DevTask` for each one without a non-terminal CR.
-2. **Reconciles DevTask CRs** through the state machine (see below).
-3. **Watches child pods** — completion/failure/timeout projected to `DevTask.status`.
+1. **Polls GitHub** every 30s ([`github_poller.go`](operator/internal/controller/github_poller.go)) for open issues labeled `ready-for-development` (PRs in the issue list are skipped). Creates a `DevTask` named `<repo>-<issue>` for each issue that doesn't already have a CR. Terminal tasks are never restarted automatically.
+2. **Reconciles DevTask CRs** through the state machine ([`devtask_controller.go`](operator/internal/controller/devtask_controller.go)).
+3. **Watches the child agent pod** — its Kubernetes phase (`Running`/`Succeeded`/`Failed`) drives the DevTask phase. The operator also watches the PR: it posts the PR link on the issue, detects merge/close, and detects the `needs-revision` label.
+
+The operator detects the PR by branch name rather than trusting the agent to report it: it lists open PRs and prefix-matches on `claude/issue-<N>-` (or the legacy `claude/issue-<N>`).
 
 ### Triage CronJob
 
-`claude -p` every 5 minutes against issues labeled `needs-triage`. Runs in namespace `agentic-dev-pipeline-triage` with narrower egress (no package registries, no repo clone). Uses a cheaper model (Sonnet). If the issue is ready: writes a concrete implementation plan as a comment, applies `ready-for-development`. If not: asks for clarification, applies `needs-info`.
+`claude -p` every 5 minutes ([`deploy/triage/cronjob.yaml`](deploy/triage/cronjob.yaml)) against issues labeled `needs-triage`, in namespace `agentic-dev-pipeline-triage` with its own narrow egress ([`triage/networkpolicy.yaml`](deploy/triage/networkpolicy.yaml): DNS + HTTPS only). Job deadline 240s, `concurrencyPolicy: Forbid`. The prompt lives in a ConfigMap ([`configmap-prompt.yaml`](deploy/triage/configmap-prompt.yaml)) and is invoked with `--allowedTools 'Bash'` — all GitHub access is via the `gh` CLI (`gh api`, no repo clone).
+
+Per issue, the agent:
+- **Idempotency guard:** skips if the last comment is the agent's own (`Implementation plan` or `/clarification-needed`); re-processes if a human has replied since.
+- Reads the issue and key repo files via `gh api`, and **fetches + inlines** any URLs in the issue body (the developer agent will not follow links).
+- **If ready:** removes `needs-triage`, posts an `Implementation plan: ...` comment, applies `ready-for-development`.
+- **If not:** removes `needs-triage`, posts a `/clarification-needed: ...` comment, applies `needs-info`.
+
+The `needs-triage` label is removed *before* the follow-up step so a re-run is idempotent even if the comment/label step fails.
 
 ### Sandbox Namespace
 
-Per `DevTask`. Created on Pending→Building transition, destroyed on Completed/Failed.
+One per `DevTask`, named `devtask-<issue-number>` ([`namespace.go`](operator/internal/controller/namespace.go)). Created on first reconcile, destroyed when the PR merges/closes or when the agent requests clarification (the CR survives; the namespace is recreated on resume).
 
-**NetworkPolicy** — deny-all egress except:
-- kube-dns (UDP 53)
-- `api.github.com` (GitHub API via MCP, git push/pull)
-- `api.anthropic.com` (Claude API)
-- Package registries during build phase (npmjs.org etc.)
+**NetworkPolicy** `sandbox-egress` ([`networkpolicy.go`](operator/internal/controller/networkpolicy.go)) — deny-all ingress, egress restricted to:
+- kube-dns (UDP/TCP 53)
+- all external HTTPS (TCP 443)
 
-**Pod security** — `runAsNonRoot: true`, `readOnlyRootFilesystem: true`, all caps dropped, `activeDeadlineSeconds: 1800`.
+Egress is port-scoped, not host-scoped: any `:443` destination is reachable (GitHub, Anthropic, package registries). Calico enforces this — Flannel does not, so the cluster must use Calico CNI.
 
-**Credentials** — per-task Secrets (not cluster-wide). GitHub fine-grained PAT scoped to single repo. Anthropic project-scoped key.
+**Pod security** ([`pod.go`](operator/internal/controller/pod.go)) — `runAsNonRoot: true` as UID/GID 1000 (the `node` user, required for `--dangerously-skip-permissions`, which refuses root), `readOnlyRootFilesystem: true`, all capabilities dropped, `allowPrivilegeEscalation: false`, `RuntimeDefault` seccomp, `activeDeadlineSeconds: 1800`, `restartPolicy: Never`. Writable state lives in `emptyDir` volumes (`/workspaces`, `/tmp`, `/home/node`).
 
-### envbuilder Pod
+**Credentials** — a per-task Secret `devtask-<issue>-creds` ([`secrets.go`](operator/internal/controller/secrets.go)), copied from the cluster-wide `pipeline-creds` Secret in `devpipeline-system`. Keys: `github-token`, `claude-token`, `claude-auth-mode`, `git-author-name`, `git-author-email`.
 
-Builds the `slaktforskning` devcontainer from `.devcontainer/devcontainer.json` using envbuilder. Layer cache pushed to the local registry (`slaktforskning-registry:5000`). Cold build: minutes. Warm build: seconds.
+### Agent Pod
 
-Once built, runs `claude -p "<prompt>"` with the prompt template from a ConfigMap.
+The agent pod runs a **pre-built devcontainer image** pulled from the in-cluster registry (`AGENT_IMAGE`, default `localhost:5000/devcontainer:latest`) — it does **not** run envbuilder per task. envbuilder's `postCreateCommand` (npm install + Playwright browser download, ~600 MiB) consistently OOMKills the pod, so the image is built once offline and reused (see [Image Cache](#image-cache)).
+
+A `busybox` init container writes the run script; the agent container then, as the `node` user:
+1. Configures git credentials via a `git-credentials` store (token never appears in the remote URL).
+2. In `oauth` auth mode, unsets `ANTHROPIC_API_KEY` so Claude Code falls through to `CLAUDE_CODE_OAUTH_TOKEN` (subscription billing). See [Auth modes](#auth-modes).
+3. Clones the repo, then checks out an existing `claude/issue-<N>` / `claude/issue-<N>-*` branch if one exists on the remote (so resumes and slug changes don't fork a new branch).
+4. **Deletes `.mcp.json`** so Claude does not spawn Node.js MCP servers (they get OOMKilled). The `gh` CLI covers all GitHub operations.
+5. Runs `claude -p "<prompt>"`, writing JSON output to `/tmp/claude-output.json`.
 
 ## State Machine
 
-```
-             ┌─────────┐
-             │ Pending │  ← operator creates on ready-for-development label
-             └────┬────┘
-                  │ create namespace, NetworkPolicy, Secrets, envbuilder Pod
-                  ▼
-             ┌─────────┐
-             │Building │  ← envbuilder building devcontainer image
-             └────┬────┘
-                  │ build complete, claude -p starts
-                  ▼
-             ┌─────────┐
-┌────────────┤ Running │──────────────────────────────┐
-│ pod exits 0└────┬────┘ pod exits 2 +                │
-│ PR URL in        │      /clarification comment       │
-│ stdout           │                                   │
-▼                  │ pod exits nonzero                  ▼
-┌───────────────┐  │  (other)          ┌────────────────────────┐
-│AwaitingReview │  ▼                   │BlockedOnClarification  │
-└───────┬───────┘ ┌──────────┐         └────────────┬───────────┘
-        │ PR      │  Failed  │          human        │
-        │ merged  └──────────┘          comments,    │
-        │ or closed                     label stays  │
-        ▼                               ▼
-┌───────────────┐              (back to Pending,
-│  Completed    │               new pod, existing branch)
-└───────────────┘
+```mermaid
+stateDiagram-v2
+    [*] --> Building: poller creates CR (empty phase); create ns, NetworkPolicy, Secret, Pod
+    Building --> Running: agent pod Running
+    Running --> AwaitingReview: pod Succeeded and PR found (operator posts PR link)
+    Running --> BlockedOnClarification: pod Failed and issue has /clarification comment
+    Running --> Failed: pod Failed (no clarification), or Succeeded but no PR
+    AwaitingReview --> Completed: PR merged or closed (delete namespace)
+    AwaitingReview --> AwaitingRevision: PR labeled needs-revision
+    AwaitingRevision --> Building: spawn agent-rev pod, force-push to PR branch
+    BlockedOnClarification --> Building: human replies, resume on existing branch
+    Completed --> [*]
+    Failed --> [*]
 ```
 
-**Clarification handoff:** When the agent exits 2 with a `/clarification:` comment on the issue, the operator deletes the pod and namespace (not the CR), transitions to `BlockedOnClarification`, and waits. When a human responds on the issue, the next reconcile transitions back to Pending and spawns a fresh pod. The fresh pod receives `CLAUDE_RESUME_BRANCH=claude/issue-42` and a prompt variant that says "continue from the existing branch, read ticket for clarification answers."
+Transitions are driven by the **Kubernetes pod phase**, not by the agent's exit code:
+
+- **`Succeeded`** → the operator verifies a real PR exists on the canonical branch (claude `-p` often exits 0 even when the final `gh pr create` failed). PR found → `AwaitingReview` and the operator posts `PR: <url>` on the issue itself (idempotently — the agent is told *not* to comment). No PR → `Failed`.
+- **`Failed`** → if the issue has a comment starting with `/clarification:`, the namespace is deleted and the task moves to `BlockedOnClarification`; otherwise → `Failed`.
+
+**Clarification handoff:** in `BlockedOnClarification` the operator waits until the last issue comment is from a human (not a bot), then recreates the namespace/Secret and spawns a **resume** pod (`agentPodResume`) that checks out the existing branch and continues from the human's answer.
+
+**Revision handoff:** in `AwaitingReview`, if the PR gets the `needs-revision` label, the task moves to `AwaitingRevision`. The operator removes the label, recreates the sandbox, and spawns a **revision** pod (`agent-rev`, `agentPodRevision`) that checks out the PR head branch (`gh pr view --json headRefName`), addresses the review comments, and force-pushes to the existing PR (no new PR opened). A prior `agent-rev` pod is deleted first so each revision cycle starts clean.
 
 ## Agent Invocation
 
-The operator constructs the Pod spec with the prompt template from a ConfigMap. The canonical prompt:
+The operator constructs the pod spec and prompt in Go ([`pod.go`](operator/internal/controller/pod.go)) — the agent prompt is **not** a ConfigMap (only the triage prompt is). Three prompt variants share one pod template:
 
-```
-You are working on GitHub issue #{issueNumber} in {repo}.
+- **`buildAgentPrompt`** (initial): read issue → create/checkout `claude/issue-<N>-<slug>` branch → implement → commit (signed-off, multiple `-m` flags) → push → `gh pr create --fill-first`. Does not comment on the issue (the operator posts the PR link).
+- **`agentPodResume`** (after clarification): checkout existing branch → read the human's reply → finish the work → push → open PR if not already open.
+- **`buildRevisionPrompt`** (after `needs-revision`): read PR reviews/comments → address all feedback → commit → `git push --force-with-lease`; never open a new PR.
 
-Your task:
-1. Read the issue and comments via the GitHub MCP. The issue body contains an implementation plan — follow it.
-2. Work on branch `claude/issue-{issueNumber}` (create or check out as needed).
-3. Run tests. Iterate until they pass.
-4. Commit and push. Open a PR against main, linking the issue.
-5. Post a comment on the issue with the PR URL.
+All variants enforce **single-line bash commands** (the headless bash wrapper corrupts line continuations into literal `\n` args) and `git restore .mcp.json` before `git add -A`.
 
-If blocked or plan is unclear:
-- Commit WIP, push the branch, open/update a draft PR
-- Comment on the issue starting with "/clarification:" and explain what you need
-- Exit with code 2
-```
+Invocation flags (all variants): `--allowedTools 'Read,Edit,Write,Bash'`, `--dangerously-skip-permissions`, `--output-format json`. Note `mcp__github` is **not** in the allowlist — `.mcp.json` is deleted and `gh` is used directly.
 
-Invocation flags: `--allowedTools "Read,Edit,Write,Bash,mcp__github"`, `--dangerously-skip-permissions`, `--output-format json`.
+## Configuration
 
-## Repo Contract (slaktforskning side)
+Per-deployment values live in `.pipeline.env` (written by `make init`):
 
-The `slaktforskning` repo needs:
+| Variable | Purpose |
+|---|---|
+| `TARGET_REPO` | Repo the pipeline maintains (`owner/name`); passed to the operator as `PIPELINE_REPOS` |
+| `CLUSTER_NAME` | k3d cluster name |
+| `REGISTRY_NAME` | In-cluster registry name (image host is `<REGISTRY_NAME>:5000`) |
+| `DEVCONTAINER_IMAGE` | Devcontainer image name |
+| `GITHUB_TOKEN`, `GIT_AUTHOR_NAME`, `GIT_AUTHOR_EMAIL` | Stored in `pipeline-creds` |
+| `CLAUDE_OAUTH_TOKEN` *or* `CLAUDE_TOKEN` | Subscription (oauth) or API-key auth — determines `claude-auth-mode` |
 
-1. `.devcontainer/devcontainer.json` — must install `claude` CLI (via the Anthropic devcontainer feature or the Dockerfile)
-2. `.mcp.json` — must include the GitHub MCP server so `claude -p` can read issues and open PRs
-3. `CODEOWNERS` — covering `.devcontainer/`, `.mcp.json`, `.github/workflows/` (security: these files define what executes with elevated privileges)
+Bring-up flow: `make init && make cluster && make seed-image && make secrets && make run`. `make triage` fires a one-off triage job; `make demo` files a demo issue.
 
-The pipeline doesn't know what language or tools the repo uses — that's the devcontainer's job.
+## Repo Contract (target-repo side)
+
+The maintained repo needs:
+
+1. `.devcontainer/devcontainer.json` — defines the image that `make seed-image` builds via envbuilder. Must yield an image with `claude`, `git`, and `gh` installed.
+2. `CODEOWNERS` — covering `.devcontainer/` and `.github/workflows/` (security: these files define what executes with elevated privileges). The agent may modify them only when an issue explicitly targets them.
+
+`.mcp.json` is *not* required — the agent deletes it if present and uses the `gh` CLI instead. The pipeline doesn't know the repo's language or tools; that's the devcontainer's job.
+
+## Auth modes
+
+Both `ANTHROPIC_API_KEY` and `CLAUDE_CODE_OAUTH_TOKEN` are populated from the same `claude-token` secret value. The `claude-auth-mode` key selects behavior at runtime:
+
+- **`oauth`** — the run script unsets `ANTHROPIC_API_KEY`, so Claude Code uses `CLAUDE_CODE_OAUTH_TOKEN` (subscription billing).
+- **`api`** — `ANTHROPIC_API_KEY` is used (API billing).
+
+`make secrets` sets the mode based on whether `CLAUDE_OAUTH_TOKEN` or `CLAUDE_TOKEN` is provided, for both the system and triage namespaces.
 
 ## Security Model
 
-- **Namespace boundary:** Each task gets its own namespace. No shared storage, no shared service accounts.
-- **NetworkPolicy:** Calico enforces egress. The agent can only reach pre-approved endpoints.
-- **Pod security:** Non-root, read-only rootFS, no privilege escalation, all caps dropped.
-- **Credentials:** Per-task Secrets from fine-grained PATs. Not cluster-wide. Scoped to single repo, single task duration.
-- **`--dangerously-skip-permissions`:** Disables the in-process approval check. This is intentional — the namespace sandbox replaces it. The flag name is scary; the security comes from the pod boundary.
+- **Namespace boundary:** each task gets its own namespace. No shared storage, no shared service accounts.
+- **NetworkPolicy:** Calico enforces deny-all ingress and port-scoped egress (DNS + HTTPS). The agent reaches the network only over `:443`.
+- **Pod security:** non-root (UID 1000), read-only rootFS, no privilege escalation, all caps dropped, `RuntimeDefault` seccomp, 1800s deadline.
+- **Credentials:** per-task Secrets copied from `pipeline-creds`, scoped to the task namespace and torn down with it. The GitHub token is held in a git-credentials store, never in the remote URL.
+- **`--dangerously-skip-permissions`:** disables the in-process approval check. Intentional — the namespace sandbox replaces it. The flag name is scary; the security comes from the pod boundary.
 - **POC note:** NetworkPolicy enforcement requires Calico. k3d's default Flannel does not enforce it. Install Calico on cluster creation.
 
 ## Image Cache
 
-envbuilder pushes built layers to `slaktforskning-registry:5000` (k3d local registry). Set via `ENVBUILDER_CACHE_REPO=slaktforskning-registry:5000/slaktforskning-devcontainer`. Cache hits are per layer; a small code change in `postCreateCommand` may bust part of the cache but reuse base image layers.
+The devcontainer image is built **once, offline** by `make seed-image` (envbuilder via [`scripts/test-envbuilder.sh`](scripts/test-envbuilder.sh)) and pushed to the in-cluster registry — host side `localhost:5050`, in-cluster `<REGISTRY_NAME>:5000`. Both the triage CronJob and every operator-spawned agent pod **pull** this pre-built image; nothing builds during a task.
 
-Without the local registry, every task rebuilds from scratch and iteration time becomes unbearable.
+This is a deliberate departure from per-task envbuilder builds: running envbuilder's `postCreateCommand` inside each task pod exhausts the Docker VM's memory/swap and OOMKills the agent. Building ahead of time keeps task start-up to an image pull.
