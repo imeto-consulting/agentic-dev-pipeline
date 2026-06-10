@@ -105,6 +105,25 @@ func (r *DevTaskReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 				task.Status.Message = "agent pod exited 0 but no PR was opened on the canonical branch"
 				return ctrl.Result{}, r.Status().Update(ctx, task)
 			}
+				// Diff policy: reject PRs touching restricted/risky paths or exceeding
+				// size caps before forwarding them for human review.
+				files, ferr := listPRFiles(ctx, r.Client, task, pr.GetNumber())
+				if ferr != nil {
+					return ctrl.Result{RequeueAfter: 30 * time.Second}, ferr
+				}
+				issueBody, berr := getIssueBody(ctx, r.Client, task)
+				if berr != nil {
+					return ctrl.Result{RequeueAfter: 30 * time.Second}, berr
+				}
+				if violations := evaluateDiff(files, issueBody, loadDiffPolicy()); len(violations) > 0 {
+					if rerr := rejectPRForDiffPolicy(ctx, r.Client, task, pr.GetNumber(), violations); rerr != nil {
+						return ctrl.Result{RequeueAfter: 30 * time.Second}, rerr
+					}
+					_ = deleteNamespace(ctx, r.Client, task.Status.Namespace)
+					task.Status.Phase = devpipelinev1alpha1.PhaseFailed
+					task.Status.Message = "diff policy: " + violations[0].Reason
+					return ctrl.Result{}, r.Status().Update(ctx, task)
+				}
 			// Post "PR: <url>" on the issue ourselves rather than asking the agent to.
 			// The agent's bash wrapper mangles multi-arg gh commands, leaving artifacts
 			// like an empty "PR: " comment followed by a separate URL-only comment.

@@ -270,6 +270,71 @@ func removePRLabel(ctx context.Context, c client.Client, task *devpipelinev1alph
 	return err
 }
 
+// listPRFiles returns the changed files for a PR (additions/deletions per file
+// and the path list), paging through all results. Used by the diff policy.
+func listPRFiles(ctx context.Context, c client.Client, task *devpipelinev1alpha1.DevTask, prNumber int) ([]*gh.CommitFile, error) {
+	creds, err := readPipelineCredentials(ctx, c)
+	if err != nil {
+		return nil, err
+	}
+	parts := strings.SplitN(task.Spec.Repo, "/", 2)
+	ghClient := newGHClient(ctx, creds.githubToken)
+
+	var all []*gh.CommitFile
+	opts := &gh.ListOptions{PerPage: 100}
+	for {
+		files, resp, err := ghClient.PullRequests.ListFiles(ctx, parts[0], parts[1], prNumber, opts)
+		if err != nil {
+			return nil, err
+		}
+		all = append(all, files...)
+		if resp.NextPage == 0 {
+			break
+		}
+		opts.Page = resp.NextPage
+	}
+	return all, nil
+}
+
+// getIssueBody returns the issue body text for diff-policy approve-risky-paths parsing.
+func getIssueBody(ctx context.Context, c client.Client, task *devpipelinev1alpha1.DevTask) (string, error) {
+	creds, err := readPipelineCredentials(ctx, c)
+	if err != nil {
+		return "", err
+	}
+	parts := strings.SplitN(task.Spec.Repo, "/", 2)
+	ghClient := newGHClient(ctx, creds.githubToken)
+	issue, _, err := ghClient.Issues.Get(ctx, parts[0], parts[1], task.Spec.IssueNumber)
+	if err != nil {
+		return "", err
+	}
+	return issue.GetBody(), nil
+}
+
+// rejectPRForDiffPolicy posts a comment listing the violations and closes the PR.
+func rejectPRForDiffPolicy(ctx context.Context, c client.Client, task *devpipelinev1alpha1.DevTask, prNumber int, violations []DiffViolation) error {
+	creds, err := readPipelineCredentials(ctx, c)
+	if err != nil {
+		return err
+	}
+	parts := strings.SplitN(task.Spec.Repo, "/", 2)
+	ghClient := newGHClient(ctx, creds.githubToken)
+
+	var b strings.Builder
+	b.WriteString("Automated diff policy rejected this PR. The agent's changes were not forwarded for review:\n\n")
+	for _, v := range violations {
+		b.WriteString("- " + v.Detail + "\n")
+	}
+	b.WriteString("\nThis PR has been closed. Adjust the issue (or its `approve-risky-paths:` token) and re-trigger if appropriate.")
+	body := b.String()
+	if _, _, err := ghClient.Issues.CreateComment(ctx, parts[0], parts[1], prNumber, &gh.IssueComment{Body: &body}); err != nil {
+		return err
+	}
+	state := "closed"
+	_, _, err = ghClient.PullRequests.Edit(ctx, parts[0], parts[1], prNumber, &gh.PullRequest{State: &state})
+	return err
+}
+
 func newGHClient(ctx context.Context, token string) *gh.Client {
 	ts := oauth2.StaticTokenSource(&oauth2.Token{AccessToken: token})
 	return gh.NewClient(oauth2.NewClient(ctx, ts))
