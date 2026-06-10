@@ -1,0 +1,69 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: egress-proxy
+  namespace: egress-proxy
+  labels:
+    app: egress-proxy
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: egress-proxy
+  template:
+    metadata:
+      labels:
+        app: egress-proxy
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 31
+        runAsGroup: 31
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: squid
+        # Pin by tag; bump deliberately. ubuntu/squid is a maintained rootless image.
+        image: ubuntu/squid:6.6-24.04_edge
+        ports:
+        - containerPort: 3128
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: false  # squid writes runtime state under /var/spool
+          capabilities:
+            drop: [ALL]
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            cpu: 500m
+            memory: 256Mi
+        volumeMounts:
+        - name: config
+          mountPath: /etc/squid/squid.conf
+          subPath: squid.conf
+          readOnly: true
+        readinessProbe:
+          tcpSocket:
+            port: 3128
+          initialDelaySeconds: 5
+          periodSeconds: 10
+      volumes:
+      - name: config
+        configMap:
+          name: egress-proxy-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: egress-proxy
+  namespace: egress-proxy
+spec:
+  selector:
+    app: egress-proxy
+  ports:
+  - name: proxy
+    port: 3128
+    targetPort: 3128

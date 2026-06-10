@@ -1,0 +1,58 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: egress-proxy-config
+  namespace: egress-proxy
+data:
+  squid.conf: |
+    # Forward proxy with a CONNECT-domain allowlist. Agent pods get
+    # HTTPS_PROXY pointing here; their NetworkPolicy denies all direct :443,
+    # so this allowlist is the only way out. A prompt-injected agent cannot
+    # CONNECT to an arbitrary exfiltration host.
+    #
+    # Edit the allowlist for your target repo's toolchain (extra package
+    # registries, etc.). Keep it as tight as the build actually needs.
+
+    http_port 3128
+
+    # Only requests from in-cluster RFC1918 ranges (the agent namespaces).
+    acl localnet src 10.0.0.0/8
+    acl localnet src 172.16.0.0/12
+    acl localnet src 192.168.0.0/16
+
+    # HTTPS goes through CONNECT; only 443 is allowed as a CONNECT target.
+    acl SSL_ports port 443
+    acl CONNECT method CONNECT
+
+    # The destination allowlist. .example.com matches the domain and all
+    # subdomains. Everything not listed is denied.
+    acl allowed_domains dstdomain .github.com
+    acl allowed_domains dstdomain .githubusercontent.com
+    acl allowed_domains dstdomain codeload.github.com
+    acl allowed_domains dstdomain .anthropic.com
+    acl allowed_domains dstdomain .registry.npmjs.org
+    acl allowed_domains dstdomain registry.npmjs.org
+    acl allowed_domains dstdomain .npmjs.org
+    acl allowed_domains dstdomain .pypi.org
+    acl allowed_domains dstdomain .pythonhosted.org
+
+    # Deny CONNECT to anything but :443.
+    http_access deny CONNECT !SSL_ports
+    # Reject requests from outside the cluster.
+    http_access deny !localnet
+    # Allow allowlisted domains from the cluster; deny everything else.
+    http_access allow localnet allowed_domains
+    http_access deny all
+
+    # No on-disk cache; this is a policy gateway, not a cache.
+    cache deny all
+
+    # Don't leak the proxy's presence / internal topology.
+    forwarded_for delete
+    via off
+    httpd_suppress_version_string on
+
+    # Logs to stdout for kubectl logs.
+    access_log stdio:/dev/stdout
+    cache_log stdio:/dev/stderr
+    pid_filename none

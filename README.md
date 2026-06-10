@@ -95,6 +95,30 @@ the label within 30 seconds and starts an agent pod to implement it.
 make triage
 ```
 
+## Egress allowlist (optional, recommended for public repos)
+
+By default an agent pod may reach any host on `:443`. That is enough for a
+prompt-injected agent to POST a token to an attacker's server. The
+`deploy/egress-proxy/` manifests deploy a Squid forward proxy with a
+CONNECT-domain allowlist (github.com, anthropic.com, npm/pypi by default) and
+flip the model to **proxy-only egress**: the agent's NetworkPolicy denies all
+direct `:443`, so the allowlist is the only way out.
+
+```bash
+kubectl apply -f deploy/egress-proxy/        # namespace, configmap, deployment, service, networkpolicy
+# Then point the operator at the proxy and restart it:
+export EGRESS_PROXY_URL=http://egress-proxy.egress-proxy.svc.cluster.local:3128
+make run
+```
+
+When `EGRESS_PROXY_URL` is set the operator (a) tightens each task's
+NetworkPolicy to DNS + the proxy namespace only, and (b) injects
+`HTTPS_PROXY`/`HTTP_PROXY`/`NO_PROXY` into the agent containers. Unset, behavior
+is unchanged. Edit the allowlist in `deploy/egress-proxy/configmap.yaml` to match
+your target repo's toolchain — keep it as tight as the build actually needs.
+Requires Calico (NetworkPolicy enforcement); the triage CronJob is not yet
+proxied (tracked follow-up).
+
 ## Reviewing plans
 
 The triage agent self-classifies each plan. If the plan it writes proposes

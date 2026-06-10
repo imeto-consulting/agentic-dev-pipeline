@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: egress-proxy
+  labels:
+    app.kubernetes.io/managed-by: agentic-dev-pipeline
+    # kubernetes.io/metadata.name is set automatically and is what the task
+    # NetworkPolicy selects on in egress-proxy mode.

@@ -1,0 +1,33 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: egress-proxy
+  namespace: egress-proxy
+spec:
+  podSelector:
+    matchLabels:
+      app: egress-proxy
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  # Accept proxy traffic only from pipeline-managed task namespaces.
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          app.kubernetes.io/managed-by: agentic-dev-pipeline
+    ports:
+    - protocol: TCP
+      port: 3128
+  egress:
+  # DNS, and outbound HTTPS to the allowlisted upstreams. The CONNECT-domain
+  # allowlist in squid.conf — not this policy — is what restricts WHICH hosts;
+  # this policy just confines the proxy to DNS + :443.
+  - ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
+  - ports:
+    - protocol: TCP
+      port: 443

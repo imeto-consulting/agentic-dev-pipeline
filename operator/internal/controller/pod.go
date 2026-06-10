@@ -155,6 +155,34 @@ func agentPod(task *devpipelinev1alpha1.DevTask, githubToken, claudeToken string
 		prompt,
 	)
 
+	agentEnv := []corev1.EnvVar{
+		{Name: "GITHUB_PERSONAL_ACCESS_TOKEN", ValueFrom: secretRef(task, "github-token")},
+		{Name: "GITHUB_TOKEN", ValueFrom: secretRef(task, "github-token")},
+		{Name: "CLAUDE_CODE_OAUTH_TOKEN", ValueFrom: secretRef(task, "claude-token")},
+		// Both ANTHROPIC_API_KEY and CLAUDE_CODE_OAUTH_TOKEN are populated from the same
+		// secret value. The run script unsets ANTHROPIC_API_KEY when CLAUDE_AUTH_MODE=oauth
+		// so Claude Code falls through to CLAUDE_CODE_OAUTH_TOKEN (subscription billing).
+		{Name: "ANTHROPIC_API_KEY", ValueFrom: secretRef(task, "claude-token")},
+		{Name: "CLAUDE_AUTH_MODE", ValueFrom: secretRef(task, "claude-auth-mode")},
+		{Name: "GIT_AUTHOR_NAME", ValueFrom: secretRef(task, "git-author-name")},
+		{Name: "GIT_AUTHOR_EMAIL", ValueFrom: secretRef(task, "git-author-email")},
+		{Name: "GIT_COMMITTER_NAME", ValueFrom: secretRef(task, "git-author-name")},
+		{Name: "GIT_COMMITTER_EMAIL", ValueFrom: secretRef(task, "git-author-email")},
+	}
+	// Egress-proxy mode: route all outbound HTTPS through the forward proxy.
+	// NO_PROXY keeps cluster-internal + loopback traffic direct.
+	if egressProxyEnabled() {
+		proxy := egressProxyURL()
+		agentEnv = append(agentEnv,
+			corev1.EnvVar{Name: "HTTPS_PROXY", Value: proxy},
+			corev1.EnvVar{Name: "https_proxy", Value: proxy},
+			corev1.EnvVar{Name: "HTTP_PROXY", Value: proxy},
+			corev1.EnvVar{Name: "http_proxy", Value: proxy},
+			corev1.EnvVar{Name: "NO_PROXY", Value: "localhost,127.0.0.1,.svc,.cluster.local,10.0.0.0/8"},
+			corev1.EnvVar{Name: "no_proxy", Value: "localhost,127.0.0.1,.svc,.cluster.local,10.0.0.0/8"},
+		)
+	}
+
 	return &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      agentPodName,
@@ -225,20 +253,7 @@ func agentPod(task *devpipelinev1alpha1.DevTask, githubToken, claudeToken string
 						corev1.ResourceMemory: resource.MustParse("2Gi"),
 					},
 				},
-				Env: []corev1.EnvVar{
-					{Name: "GITHUB_PERSONAL_ACCESS_TOKEN", ValueFrom: secretRef(task, "github-token")},
-					{Name: "GITHUB_TOKEN", ValueFrom: secretRef(task, "github-token")},
-					{Name: "CLAUDE_CODE_OAUTH_TOKEN", ValueFrom: secretRef(task, "claude-token")},
-					// Both ANTHROPIC_API_KEY and CLAUDE_CODE_OAUTH_TOKEN are populated from the same
-					// secret value. The run script unsets ANTHROPIC_API_KEY when CLAUDE_AUTH_MODE=oauth
-					// so Claude Code falls through to CLAUDE_CODE_OAUTH_TOKEN (subscription billing).
-					{Name: "ANTHROPIC_API_KEY", ValueFrom: secretRef(task, "claude-token")},
-					{Name: "CLAUDE_AUTH_MODE", ValueFrom: secretRef(task, "claude-auth-mode")},
-					{Name: "GIT_AUTHOR_NAME", ValueFrom: secretRef(task, "git-author-name")},
-					{Name: "GIT_AUTHOR_EMAIL", ValueFrom: secretRef(task, "git-author-email")},
-					{Name: "GIT_COMMITTER_NAME", ValueFrom: secretRef(task, "git-author-name")},
-					{Name: "GIT_COMMITTER_EMAIL", ValueFrom: secretRef(task, "git-author-email")},
-				},
+				Env: agentEnv,
 				VolumeMounts: []corev1.VolumeMount{
 					{Name: "workdir", MountPath: "/workspaces"},
 					{Name: "tmp", MountPath: "/tmp"},
