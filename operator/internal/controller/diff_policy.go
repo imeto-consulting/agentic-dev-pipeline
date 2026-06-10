@@ -153,7 +153,7 @@ func evaluateDiff(files []*gh.CommitFile, issueBody string, policy DiffPolicy) [
 func parseApprovedGlobs(issueBody string) []string {
 	const marker = "approve-risky-paths:"
 	var globs []string
-	for _, line := range strings.Split(issueBody, "\n") {
+	for line := range strings.SplitSeq(issueBody, "\n") {
 		idx := strings.Index(strings.ToLower(line), marker)
 		if idx < 0 {
 			continue
@@ -192,12 +192,10 @@ func matchedByAny(patterns []string, p string) bool {
 //
 // Paths use forward slashes (GitHub's filename format).
 func globMatch(pattern, p string) bool {
-	if strings.HasSuffix(pattern, "/**") {
-		prefix := strings.TrimSuffix(pattern, "/**")
+	if prefix, ok := strings.CutSuffix(pattern, "/**"); ok {
 		return p == prefix || strings.HasPrefix(p, prefix+"/")
 	}
-	if strings.HasPrefix(pattern, "**/") {
-		suffix := strings.TrimPrefix(pattern, "**/")
+	if suffix, ok := strings.CutPrefix(pattern, "**/"); ok {
 		base := path.Base(p)
 		if strings.Contains(suffix, "*") {
 			if ok, _ := path.Match(suffix, base); ok {

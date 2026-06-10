@@ -173,8 +173,8 @@ func TestGlobMatch(t *testing.T) {
 }
 
 func manyFiles(n int) []*gh.CommitFile {
-	var fs []*gh.CommitFile
-	for i := 0; i < n; i++ {
+	fs := make([]*gh.CommitFile, 0, n)
+	for i := range n {
 		fs = append(fs, file("docs/f"+string(rune('a'+i%26))+string(rune('0'+i/26))+".md", 1, 0))
 	}
 	return fs

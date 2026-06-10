@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -34,10 +35,10 @@ import (
 )
 
 const (
-	pollInterval           = 30 * time.Second
-	readyLabel             = "ready-for-development"
-	defaultMaxConcurrent   = 3
-	maxConcurrentTasksEnv  = "MAX_CONCURRENT_TASKS"
+	pollInterval          = 30 * time.Second
+	readyLabel            = "ready-for-development"
+	defaultMaxConcurrent  = 3
+	maxConcurrentTasksEnv = "MAX_CONCURRENT_TASKS"
 )
 
 // maxConcurrentTasks is the ceiling on simultaneously-active DevTasks across all
@@ -124,7 +125,7 @@ func pollRepo(ctx context.Context, c client.Client, repo string) error {
 		if issue.PullRequestLinks != nil {
 			continue // GitHub returns PRs in the issues list; skip them
 		}
-		created, err := ensureDevTask(ctx, c, repo, int(issue.GetNumber()), active < limit)
+		created, err := ensureDevTask(ctx, c, repo, issue.GetNumber(), active < limit)
 		if err != nil {
 			log.FromContext(ctx).Error(err, "ensure devtask", "issue", issue.GetNumber())
 			continue
@@ -300,10 +301,8 @@ func humanRepliedAfterClarification(ctx context.Context, c client.Client, task *
 		return false, nil
 	}
 	botLogins := []string{"github-actions[bot]", "app/github-actions"}
-	for _, bot := range botLogins {
-		if last.GetUser().GetLogin() == bot {
-			return false, nil
-		}
+	if slices.Contains(botLogins, last.GetUser().GetLogin()) {
+		return false, nil
 	}
 	// Authorization gate: only trusted associations may resume the agent.
 	return trustedAuthorAssociations[last.GetAuthorAssociation()], nil

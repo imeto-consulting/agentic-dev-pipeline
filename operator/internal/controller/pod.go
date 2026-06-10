@@ -115,7 +115,7 @@ func secretRef(task *devpipelinev1alpha1.DevTask, key string) *corev1.EnvVarSour
 	}
 }
 
-func agentPod(task *devpipelinev1alpha1.DevTask, githubToken, claudeToken string) *corev1.Pod {
+func agentPod(task *devpipelinev1alpha1.DevTask) *corev1.Pod {
 	ns := taskNamespace(task)
 	repo := repoName(task.Spec.Repo)
 	prompt := buildAgentPrompt(task)
@@ -326,7 +326,7 @@ func agentPodResume(task *devpipelinev1alpha1.DevTask) *corev1.Pod {
 		resumePrompt,
 	)
 
-	pod := agentPod(task, "", "")
+	pod := agentPod(task)
 	pod.Spec.InitContainers[0].Env[0].Value = runScript
 	return pod
 }
@@ -381,7 +381,7 @@ func agentPodRevision(task *devpipelinev1alpha1.DevTask) *corev1.Pod {
 		task.Status.PRNumber, task.Spec.Repo,
 		prompt,
 	)
-	pod := agentPod(task, "", "")
+	pod := agentPod(task)
 	pod.Name = "agent-rev"
 	pod.Spec.InitContainers[0].Env[0].Value = runScript
 	return pod

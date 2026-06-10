@@ -202,7 +202,8 @@ func main() {
 	// `make run` populates this from .pipeline.env automatically.
 	r := os.Getenv("PIPELINE_REPOS")
 	if r == "" {
-		setupLog.Error(nil, "PIPELINE_REPOS env var is required (comma-separated owner/repo pairs). Run via `make run` or set explicitly.")
+		setupLog.Error(nil, "PIPELINE_REPOS env var is required "+
+			"(comma-separated owner/repo pairs). Run via `make run` or set explicitly.")
 		os.Exit(1)
 	}
 	repos := strings.Split(r, ",")
