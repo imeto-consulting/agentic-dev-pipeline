@@ -15,6 +15,9 @@ spec:
         spec:
           restartPolicy: Never
           serviceAccountName: triage-agent
+          # The triage agent reads untrusted issue text and needs no Kubernetes
+          # API access — it talks to GitHub via the gh CLI. Don't mount a token.
+          automountServiceAccountToken: false
           securityContext:
             runAsUser: 1000
             runAsGroup: 1000
@@ -24,11 +27,18 @@ spec:
               type: RuntimeDefault
           initContainers:
           - name: write-script
-            image: busybox
+            image: busybox:1.37.0
             command:
             - sh
             - -c
             - printf '%s' "$SCRIPT" > /tmp/triage.sh && chmod +x /tmp/triage.sh
+            resources:
+              requests:
+                cpu: 10m
+                memory: 16Mi
+              limits:
+                cpu: 100m
+                memory: 64Mi
             env:
             - name: SCRIPT
               value: |
@@ -107,7 +117,11 @@ spec:
                   key: claude-auth-mode
             resources:
               requests:
+                cpu: 250m
                 memory: 512Mi
+              limits:
+                cpu: "1"
+                memory: 1Gi
             volumeMounts:
             - name: tmp
               mountPath: /tmp

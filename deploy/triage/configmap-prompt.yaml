@@ -15,7 +15,7 @@ data:
     2. Idempotency guard: skip only if the LAST comment is from the agent itself (a previous
        Implementation plan or /clarification-needed). If a human has responded after the
        agent's clarification, re-process the issue with the new context.
-       LAST_BY_AGENT=$(gh issue view ISSUE_NUMBER --repo jonaseck2/slaktforskning --json comments --jq '(.comments | last | .body) // "" | startswith("Implementation plan") or startswith("/clarification-needed")')
+       LAST_BY_AGENT=$(gh issue view ISSUE_NUMBER --repo ${TARGET_REPO} --json comments --jq '(.comments | last | .body) // "" | startswith("Implementation plan") or startswith("/clarification-needed")')
        If LAST_BY_AGENT is "true", exit immediately — the issue is waiting on the human.
        If "false", continue: read all comments (including the human reply) when forming the plan.
 
