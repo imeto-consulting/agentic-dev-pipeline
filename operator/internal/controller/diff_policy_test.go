@@ -107,6 +107,16 @@ func TestEvaluateDiff(t *testing.T) {
 			want:  map[string]string{"risky-path": "services/api/Dockerfile"},
 		},
 		{
+			name:  "nested package.json is risky (no top-level/nested asymmetry)",
+			files: []*gh.CommitFile{file("services/api/package.json", 2, 0)},
+			want:  map[string]string{"risky-path": "services/api/package.json"},
+		},
+		{
+			name:  "nested pyproject.toml is risky",
+			files: []*gh.CommitFile{file("pkg/pyproject.toml", 2, 0)},
+			want:  map[string]string{"risky-path": "pkg/pyproject.toml"},
+		},
+		{
 			name:  "too many files",
 			files: manyFiles(26),
 			want:  map[string]string{"too-many-files": ""},

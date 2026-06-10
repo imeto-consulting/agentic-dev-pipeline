@@ -210,7 +210,21 @@ func hasRecentClarificationComment(ctx context.Context, c client.Client, task *d
 	return false, nil
 }
 
-// humanRepliedAfterClarification returns true if the last issue comment is from a human (not a bot).
+// trustedAuthorAssociations are the GitHub author_association values we accept
+// as authorized to steer a resumed agent. On a public repo, ANY user can
+// comment on an issue, so "last comment is from a non-bot" is not enough — an
+// attacker's comment would otherwise feed straight into a credentialed agent's
+// resume prompt. Only repo owners/members/collaborators may answer a
+// /clarification and trigger a resume.
+var trustedAuthorAssociations = map[string]bool{
+	"OWNER":        true,
+	"MEMBER":       true,
+	"COLLABORATOR": true,
+}
+
+// humanRepliedAfterClarification returns true if the last issue comment is from
+// an authorized human (a repo owner/member/collaborator, not a bot). The author
+// association check is the authorization gate for resuming a blocked task.
 func humanRepliedAfterClarification(ctx context.Context, c client.Client, task *devpipelinev1alpha1.DevTask) (bool, error) {
 	creds, err := readPipelineCredentials(ctx, c)
 	if err != nil {
@@ -223,13 +237,17 @@ func humanRepliedAfterClarification(ctx context.Context, c client.Client, task *
 		return false, err
 	}
 	last := comments[len(comments)-1]
+	if last.GetUser().GetType() == "Bot" {
+		return false, nil
+	}
 	botLogins := []string{"github-actions[bot]", "app/github-actions"}
 	for _, bot := range botLogins {
 		if last.GetUser().GetLogin() == bot {
 			return false, nil
 		}
 	}
-	return true, nil
+	// Authorization gate: only trusted associations may resume the agent.
+	return trustedAuthorAssociations[last.GetAuthorAssociation()], nil
 }
 
 // prHasLabel returns true if the PR associated with the DevTask has the given label.

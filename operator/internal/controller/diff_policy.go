@@ -63,12 +63,23 @@ func defaultDiffPolicy() DiffPolicy {
 			"operator/**", // the operator must not modify itself
 			"deploy/**",
 		},
+		// Risky paths are matched at ANY depth: build/install manifests execute
+		// code during npm install / make / docker build / pip install / etc., so
+		// a nested one (services/api/package.json) is as dangerous as a top-level
+		// one. Keep top-level and **/ variants in lockstep — an asymmetry here is
+		// a bypass.
 		RiskyPaths: []string{
-			"package.json",
-			"package-lock.json",
-			"**/Dockerfile",
-			"**/Makefile",
-			"Makefile",
+			"package.json", "**/package.json",
+			"package-lock.json", "**/package-lock.json",
+			"yarn.lock", "**/yarn.lock",
+			"pnpm-lock.yaml", "**/pnpm-lock.yaml",
+			"**/Dockerfile", // top-level Dockerfile is restricted (checked first)
+			"Makefile", "**/Makefile",
+			"pyproject.toml", "**/pyproject.toml",
+			"setup.py", "**/setup.py",
+			"Gemfile", "**/Gemfile",
+			"Cargo.toml", "**/Cargo.toml",
+			"go.mod", "**/go.mod",
 		},
 		MaxFiles: 25,
 		MaxLines: 800,
