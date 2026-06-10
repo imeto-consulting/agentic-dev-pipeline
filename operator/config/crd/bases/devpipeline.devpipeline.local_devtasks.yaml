@@ -67,6 +67,12 @@ spec:
           status:
             description: status defines the observed state of DevTask
             properties:
+              failedAt:
+                description: |-
+                  FailedAt records when the task entered the Failed phase, used to TTL the
+                  task namespace so failed tasks don't leak Secrets indefinitely.
+                format: date-time
+                type: string
               message:
                 type: string
               namespace:

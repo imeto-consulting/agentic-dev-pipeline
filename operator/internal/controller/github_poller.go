@@ -19,6 +19,8 @@ package controller
 import (
 	"context"
 	"fmt"
+	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -32,9 +34,42 @@ import (
 )
 
 const (
-	pollInterval = 30 * time.Second
-	readyLabel   = "ready-for-development"
+	pollInterval           = 30 * time.Second
+	readyLabel             = "ready-for-development"
+	defaultMaxConcurrent   = 3
+	maxConcurrentTasksEnv  = "MAX_CONCURRENT_TASKS"
 )
+
+// maxConcurrentTasks is the ceiling on simultaneously-active DevTasks across all
+// watched repos. Each active task is a credentialed agent pod, so on a public
+// repo this bounds both spend and blast radius when many issues are labeled at
+// once. Override with MAX_CONCURRENT_TASKS.
+func maxConcurrentTasks() int {
+	if v := os.Getenv(maxConcurrentTasksEnv); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return n
+		}
+	}
+	return defaultMaxConcurrent
+}
+
+// countActiveDevTasks returns the number of DevTasks not in a terminal phase.
+func countActiveDevTasks(ctx context.Context, c client.Client) (int, error) {
+	list := &devpipelinev1alpha1.DevTaskList{}
+	if err := c.List(ctx, list, client.InNamespace(systemNamespace)); err != nil {
+		return 0, err
+	}
+	active := 0
+	for i := range list.Items {
+		switch list.Items[i].Status.Phase {
+		case devpipelinev1alpha1.PhaseCompleted, devpipelinev1alpha1.PhaseFailed:
+			// terminal — does not count against the cap
+		default:
+			active++
+		}
+	}
+	return active, nil
+}
 
 // StartGitHubPoller polls GitHub every 30s and creates DevTask CRs for labeled issues.
 func StartGitHubPoller(ctx context.Context, c client.Client, repos []string) {
@@ -79,28 +114,49 @@ func pollRepo(ctx context.Context, c client.Client, repo string) error {
 		return fmt.Errorf("list issues: %w", err)
 	}
 
+	active, err := countActiveDevTasks(ctx, c)
+	if err != nil {
+		return fmt.Errorf("count active devtasks: %w", err)
+	}
+	limit := maxConcurrentTasks()
+
 	for _, issue := range issues {
 		if issue.PullRequestLinks != nil {
 			continue // GitHub returns PRs in the issues list; skip them
 		}
-		if err := ensureDevTask(ctx, c, repo, int(issue.GetNumber())); err != nil {
+		created, err := ensureDevTask(ctx, c, repo, int(issue.GetNumber()), active < limit)
+		if err != nil {
 			log.FromContext(ctx).Error(err, "ensure devtask", "issue", issue.GetNumber())
+			continue
+		}
+		if created {
+			active++
+		} else if active >= limit {
+			log.FromContext(ctx).Info("at concurrency cap, deferring issue",
+				"issue", issue.GetNumber(), "active", active, "cap", limit)
 		}
 	}
 	return nil
 }
 
-func ensureDevTask(ctx context.Context, c client.Client, repo string, issueNumber int) error {
+// ensureDevTask creates a DevTask for the issue if one does not already exist.
+// Returns (created, err). When allowCreate is false and no task exists yet, it
+// is a no-op (the concurrency cap is full) — the issue keeps its label and is
+// reconsidered on the next poll.
+func ensureDevTask(ctx context.Context, c client.Client, repo string, issueNumber int, allowCreate bool) (bool, error) {
 	name := fmt.Sprintf("%s-%d", repoName(repo), issueNumber)
 
 	existing := &devpipelinev1alpha1.DevTask{}
 	err := c.Get(ctx, client.ObjectKey{Namespace: systemNamespace, Name: name}, existing)
 	if err == nil {
 		// Don't restart terminal tasks automatically
-		return nil
+		return false, nil
 	}
 	if client.IgnoreNotFound(err) != nil {
-		return err
+		return false, err
+	}
+	if !allowCreate {
+		return false, nil
 	}
 
 	task := &devpipelinev1alpha1.DevTask{
@@ -114,7 +170,10 @@ func ensureDevTask(ctx context.Context, c client.Client, repo string, issueNumbe
 		},
 	}
 	log.FromContext(ctx).Info("Creating DevTask for labeled issue", "repo", repo, "issue", issueNumber)
-	return c.Create(ctx, task)
+	if err := c.Create(ctx, task); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // findPRForTask returns the PR for a DevTask, by recorded PRNumber if present

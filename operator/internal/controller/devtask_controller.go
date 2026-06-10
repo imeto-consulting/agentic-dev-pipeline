@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"os"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -101,29 +102,28 @@ func (r *DevTaskReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 				return ctrl.Result{RequeueAfter: 30 * time.Second}, err
 			}
 			if pr == nil {
-				task.Status.Phase = devpipelinev1alpha1.PhaseFailed
-				task.Status.Message = "agent pod exited 0 but no PR was opened on the canonical branch"
+				markFailed(task, "agent pod exited 0 but no PR was opened on the canonical branch")
+				return ctrl.Result{RequeueAfter: failedNamespaceTTL}, r.Status().Update(ctx, task)
+			}
+			// Diff policy: reject PRs touching restricted/risky paths or exceeding
+			// size caps before forwarding them for human review.
+			files, ferr := listPRFiles(ctx, r.Client, task, pr.GetNumber())
+			if ferr != nil {
+				return ctrl.Result{RequeueAfter: 30 * time.Second}, ferr
+			}
+			issueBody, berr := getIssueBody(ctx, r.Client, task)
+			if berr != nil {
+				return ctrl.Result{RequeueAfter: 30 * time.Second}, berr
+			}
+			if violations := evaluateDiff(files, issueBody, loadDiffPolicy()); len(violations) > 0 {
+				if rerr := rejectPRForDiffPolicy(ctx, r.Client, task, pr.GetNumber(), violations); rerr != nil {
+					return ctrl.Result{RequeueAfter: 30 * time.Second}, rerr
+				}
+				_ = deleteNamespace(ctx, r.Client, task.Status.Namespace)
+				markFailed(task, "diff policy: "+violations[0].Reason)
+				task.Status.Namespace = ""
 				return ctrl.Result{}, r.Status().Update(ctx, task)
 			}
-				// Diff policy: reject PRs touching restricted/risky paths or exceeding
-				// size caps before forwarding them for human review.
-				files, ferr := listPRFiles(ctx, r.Client, task, pr.GetNumber())
-				if ferr != nil {
-					return ctrl.Result{RequeueAfter: 30 * time.Second}, ferr
-				}
-				issueBody, berr := getIssueBody(ctx, r.Client, task)
-				if berr != nil {
-					return ctrl.Result{RequeueAfter: 30 * time.Second}, berr
-				}
-				if violations := evaluateDiff(files, issueBody, loadDiffPolicy()); len(violations) > 0 {
-					if rerr := rejectPRForDiffPolicy(ctx, r.Client, task, pr.GetNumber(), violations); rerr != nil {
-						return ctrl.Result{RequeueAfter: 30 * time.Second}, rerr
-					}
-					_ = deleteNamespace(ctx, r.Client, task.Status.Namespace)
-					task.Status.Phase = devpipelinev1alpha1.PhaseFailed
-					task.Status.Message = "diff policy: " + violations[0].Reason
-					return ctrl.Result{}, r.Status().Update(ctx, task)
-				}
 			// Post "PR: <url>" on the issue ourselves rather than asking the agent to.
 			// The agent's bash wrapper mangles multi-arg gh commands, leaving artifacts
 			// like an empty "PR: " comment followed by a separate URL-only comment.
@@ -142,9 +142,8 @@ func (r *DevTaskReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 				task.Status.Message = "agent requested clarification"
 				return ctrl.Result{RequeueAfter: time.Minute}, r.Status().Update(ctx, task)
 			}
-			task.Status.Phase = devpipelinev1alpha1.PhaseFailed
-			task.Status.Message = "agent pod failed"
-			return ctrl.Result{}, r.Status().Update(ctx, task)
+			markFailed(task, "agent pod failed")
+			return ctrl.Result{RequeueAfter: failedNamespaceTTL}, r.Status().Update(ctx, task)
 		}
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 
@@ -228,11 +227,52 @@ func (r *DevTaskReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		task.Status.Message = "resuming after clarification"
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, r.Status().Update(ctx, task)
 
-	case devpipelinev1alpha1.PhaseCompleted, devpipelinev1alpha1.PhaseFailed:
+	case devpipelinev1alpha1.PhaseCompleted:
 		return ctrl.Result{}, nil
+
+	case devpipelinev1alpha1.PhaseFailed:
+		// TTL the task namespace so a failed task's per-task Secret (GitHub +
+		// Claude tokens) doesn't linger indefinitely in a dead namespace.
+		if task.Status.Namespace == "" || task.Status.FailedAt == nil {
+			return ctrl.Result{}, nil
+		}
+		elapsed := time.Since(task.Status.FailedAt.Time)
+		if elapsed < failedNamespaceTTL {
+			return ctrl.Result{RequeueAfter: failedNamespaceTTL - elapsed}, nil
+		}
+		if err := deleteNamespace(ctx, r.Client, task.Status.Namespace); err != nil {
+			return ctrl.Result{RequeueAfter: time.Minute}, err
+		}
+		logger.Info("deleted failed task namespace after TTL", "namespace", task.Status.Namespace)
+		task.Status.Namespace = ""
+		return ctrl.Result{}, r.Status().Update(ctx, task)
 	}
 
 	return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+}
+
+// failedNamespaceTTL is how long a failed task's namespace (and its per-task
+// Secret) survives before the operator tears it down. Override with
+// FAILED_NAMESPACE_TTL (Go duration string, e.g. "30m").
+var failedNamespaceTTL = loadFailedNamespaceTTL()
+
+func loadFailedNamespaceTTL() time.Duration {
+	if v := os.Getenv("FAILED_NAMESPACE_TTL"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			return d
+		}
+	}
+	return time.Hour
+}
+
+// markFailed sets the terminal Failed phase and stamps FailedAt for the
+// namespace TTL. It does not delete the namespace — the Failed-case reconcile
+// does that once the TTL elapses, leaving a window to inspect logs.
+func markFailed(task *devpipelinev1alpha1.DevTask, message string) {
+	now := metav1.Now()
+	task.Status.Phase = devpipelinev1alpha1.PhaseFailed
+	task.Status.Message = message
+	task.Status.FailedAt = &now
 }
 
 // SetupWithManager sets up the controller with the Manager.

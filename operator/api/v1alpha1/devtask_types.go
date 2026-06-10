@@ -56,6 +56,10 @@ type DevTaskStatus struct {
 	PRNumber int `json:"prNumber,omitempty"`
 	// +optional
 	StartedAt *metav1.Time `json:"startedAt,omitempty"`
+	// FailedAt records when the task entered the Failed phase, used to TTL the
+	// task namespace so failed tasks don't leak Secrets indefinitely.
+	// +optional
+	FailedAt *metav1.Time `json:"failedAt,omitempty"`
 	// +optional
 	Message string `json:"message,omitempty"`
 }
