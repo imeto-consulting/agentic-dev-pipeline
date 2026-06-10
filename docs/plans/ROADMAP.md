@@ -85,14 +85,17 @@
 ### Phase 5 — Pipeline Hardening for Public Release
 **Plan:** `docs/plans/2026-04-30-poc-phase5-pipeline-hardening.md`
 
-Smallest set of changes to close the supply-chain pivot before going public. Four tasks, in order: deterministic target-repo config script, diff policy on impl-agent PRs, label-gated plan review for risk patterns, GitHub App tokens replacing the long-lived PAT.
+Smallest set of changes to close the supply-chain pivot before going public. Code landed on branch `harden/public-oss-release`; live-cluster demo verification (Calico-enforced) remains before this is marked fully shipped.
 
-- [ ] Task 0 — `scripts/setup-target-repo.sh` for labels + branch protection; `config/github-app-manifest.json` + `docs/github-app-setup.md` for the App
-- [ ] Task 1 — Operator-side diff policy (restricted/risky paths, file/line caps); reject + close PR on violation
-- [ ] Task 2 — Triage applies `needs-plan-review` instead of `ready-for-development` when the plan body matches a risk pattern; maintainer transitions the label by hand
-- [ ] Task 3 — GitHub App + per-DevTask installation token in place of `pipeline-creds.github-token`
+- [x] Task 0 — `scripts/setup-target-repo.sh` for labels + branch protection; `config/github-app-manifest.json` + `docs/github-app-setup.md` for the App
+- [x] Task 1 — Operator-side diff policy (restricted/risky paths, file/line caps); reject + close PR on violation (`operator/internal/controller/diff_policy.go` + tests)
+- [x] Task 2 — Triage applies `needs-plan-review` instead of `ready-for-development` when the plan body matches a risk pattern; maintainer transitions the label by hand
+- [x] Task 3 — GitHub App + per-DevTask installation token in place of `pipeline-creds.github-token` (`github_app.go`, PAT fallback retained)
+- [x] LICENSE (Apache-2.0) / CONTRIBUTING / SECURITY paperwork
 
-Add LICENSE / CONTRIBUTING / SECURITY as a separate paperwork commit after the four engineering tasks land.
+**Beyond the original plan (from the public-OSS security audit):** author-association gate on clarification resume, concurrency cap (`MAX_CONCURRENT_TASKS`), failed-namespace TTL, `automountServiceAccountToken: false` + resource limits + pinned busybox, untrusted-input prompt preambles, and an opt-in egress allowlist proxy (`deploy/egress-proxy/` + `EGRESS_PROXY_URL`) closing the unrestricted-`:443` exfiltration path.
+
+Remaining before public: run the live-cluster demo verification for each task (diff-policy reject, plan-review gate, App-token rotation, egress-proxy block) and proxy the triage CronJob's token.
 
 ---
 

@@ -156,6 +156,16 @@ Per-deployment values live in `.pipeline.env` (written by `make init`):
 | `DEVCONTAINER_IMAGE` | Devcontainer image name |
 | `GITHUB_TOKEN`, `GIT_AUTHOR_NAME`, `GIT_AUTHOR_EMAIL` | Stored in `pipeline-creds` |
 | `CLAUDE_OAUTH_TOKEN` *or* `CLAUDE_TOKEN` | Subscription (oauth) or API-key auth — determines `claude-auth-mode` |
+| `GH_APP_ID`, `GH_INSTALLATION_ID`, `GH_APP_PRIVATE_KEY_PATH` | Optional — enables GitHub App installation-token auth (`pipeline-app-key` Secret) instead of the long-lived PAT |
+
+Operator runtime env (set on the operator, not in `pipeline-creds`):
+
+| Variable | Purpose | Default |
+|---|---|---|
+| `MAX_CONCURRENT_TASKS` | Ceiling on simultaneously-active DevTasks | 3 |
+| `FAILED_NAMESPACE_TTL` | How long a failed task's namespace survives | 1h |
+| `MAX_FILES_CHANGED` / `MAX_LINES_CHANGED` | Diff-policy size caps | 25 / 800 |
+| `EGRESS_PROXY_URL` | Enables egress-proxy mode when set | unset (direct `:443`) |
 
 Bring-up flow: `make init && make cluster && make seed-image && make secrets && make run`. `make triage` fires a one-off triage job; `make demo` files a demo issue.
 
@@ -179,12 +189,31 @@ Both `ANTHROPIC_API_KEY` and `CLAUDE_CODE_OAUTH_TOKEN` are populated from the sa
 
 ## Security Model
 
-- **Namespace boundary:** each task gets its own namespace. No shared storage, no shared service accounts.
-- **NetworkPolicy:** Calico enforces deny-all ingress and port-scoped egress (DNS + HTTPS). The agent reaches the network only over `:443`.
-- **Pod security:** non-root (UID 1000), read-only rootFS, no privilege escalation, all caps dropped, `RuntimeDefault` seccomp, 1800s deadline.
-- **Credentials:** per-task Secrets copied from `pipeline-creds`, scoped to the task namespace and torn down with it. The GitHub token is held in a git-credentials store, never in the remote URL.
+The trust boundary inverts on a public repo: issue/comment/URL text is
+attacker-controlled and flows into `claude -p`. The sandbox defends the cluster;
+these additional controls defend the credentials and the target repo.
+
+- **Namespace boundary:** each task gets its own namespace. No shared storage, no shared service accounts. The agent pod runs with `automountServiceAccountToken: false` — it has no Kubernetes API credential at all.
+- **NetworkPolicy:** Calico enforces deny-all ingress and port-scoped egress (DNS + HTTPS). By default the agent reaches any host over `:443`; in **egress-proxy mode** (`EGRESS_PROXY_URL`, see [Egress allowlist](#egress-allowlist-optional)) egress is restricted to DNS + the Squid proxy, whose CONNECT-domain allowlist is the only way out.
+- **Pod security:** non-root (UID 1000), read-only rootFS, no privilege escalation, all caps dropped, `RuntimeDefault` seccomp, CPU + memory limits, 1800s deadline.
+- **Credentials:** per-task Secrets copied from `pipeline-creds`, scoped to the task namespace and torn down with it (failed tasks TTL after `FAILED_NAMESPACE_TTL`, default 1h). With a `pipeline-app-key` Secret present the GitHub token is a freshly-minted **GitHub App installation token** (~1h TTL) instead of a long-lived PAT. The token is held in a git-credentials store, never in the remote URL.
+- **Diff policy:** before forwarding an agent PR for review, the operator rejects (closes + comments) any PR that touches restricted paths (`.github/`, `.devcontainer/`, `Dockerfile`, `.mcp.json`, `operator/`, `deploy/`), touches risky build/install manifests at any depth without an `approve-risky-paths:` token in the issue body, or exceeds the file/line caps. This is the primary control against the supply-chain pivot.
+- **Plan-review gate:** triage labels a plan `needs-plan-review` (not `ready-for-development`) when it mentions sensitive surface, so a human approves before any impl agent runs.
+- **Authorization:** resuming a clarification-blocked task requires the last commenter's `author_association` to be OWNER/MEMBER/COLLABORATOR — an anonymous public commenter cannot steer a credentialed agent.
+- **Concurrency cap:** at most `MAX_CONCURRENT_TASKS` (default 3) active tasks at once, bounding spend and blast radius.
+- **Prompt hardening:** every agent + triage prompt opens with an untrusted-input preamble (issue text is data, never instructions; never exfiltrate tokens; cannot self-approve). Defense-in-depth, not a boundary.
 - **`--dangerously-skip-permissions`:** disables the in-process approval check. Intentional — the namespace sandbox replaces it. The flag name is scary; the security comes from the pod boundary.
 - **POC note:** NetworkPolicy enforcement requires Calico. k3d's default Flannel does not enforce it. Install Calico on cluster creation.
+
+## Egress allowlist (optional)
+
+`deploy/egress-proxy/` deploys a Squid forward proxy with a CONNECT-domain
+allowlist. Setting `EGRESS_PROXY_URL` on the operator switches the task
+NetworkPolicy from "any host on `:443`" to "DNS + the proxy only" and injects
+`HTTPS_PROXY`/`HTTP_PROXY`/`NO_PROXY` into the agent containers, so a
+prompt-injected agent can only reach allowlisted hosts (github.com,
+anthropic.com, and whatever the target repo's toolchain needs). Opt-in: unset,
+egress is unchanged. Calico-only. The triage CronJob is not yet proxied.
 
 ## Image Cache
 

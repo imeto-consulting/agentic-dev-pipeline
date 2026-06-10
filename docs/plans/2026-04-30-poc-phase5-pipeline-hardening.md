@@ -1,5 +1,12 @@
 # POC Phase 5 — Pipeline Hardening for Public Release
 
+> **Status (2026-06-10):** All three tasks' code (plus the OSS paperwork and a
+> set of audit-driven extras — see ROADMAP Phase 5) landed on branch
+> `harden/public-oss-release`. The per-task step checkboxes below that describe
+> *code* are done; the **live-cluster demo-verification steps remain unchecked**
+> because they require a Calico-enforced k3d cluster (Tier 4 / hardware-bound).
+> Run those before declaring the pipeline public-ready, then archive this plan.
+
 > **For agentic workers:** Sub-tasks are checkbox items. Land each task as its own PR; do not bundle. Run the demo end-to-end after each task to confirm no regression.
 
 **Goal:** Close the supply-chain pivot before this repo is public. Ship the smallest set of changes that prevents an attacker who can file a `needs-triage` issue from landing malicious code via the agent — without adding so much friction that the pipeline stops being useful.
