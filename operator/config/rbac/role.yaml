@@ -9,12 +9,23 @@ rules:
   resources:
   - namespaces
   - pods
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - watch
+- apiGroups:
+  - ""
+  resources:
   - secrets
   verbs:
   - create
   - delete
   - get
   - list
+  - patch
+  - update
   - watch
 - apiGroups:
   - devpipeline.devpipeline.local

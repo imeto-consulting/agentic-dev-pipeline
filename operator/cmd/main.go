@@ -209,6 +209,9 @@ func main() {
 	repos := strings.Split(r, ",")
 	ctx := ctrl.SetupSignalHandler()
 	controller.StartGitHubPoller(ctx, mgr.GetClient(), repos)
+	// Rotate the triage CronJob's GitHub token from the App installation when
+	// App mode is configured; no-op under PAT auth.
+	controller.StartTriageTokenRefresher(ctx, mgr.GetClient())
 
 	setupLog.Info("Starting manager")
 	if err := mgr.Start(ctx); err != nil {
