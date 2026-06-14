@@ -66,10 +66,16 @@ scoped to a single installation — a far smaller blast radius than a PAT.
 
 `make secrets` creates a `pipeline-app-key` Secret. When it is present the
 operator uses minted installation tokens; when it is absent it falls back to
-`GITHUB_TOKEN`. **`GITHUB_TOKEN` is still required** — the triage CronJob reads
-it directly (triage minting its own token is a tracked follow-up), and it is the
-operator's fallback. Verify with `gh api /rate_limit` using a minted token: the
-identity shows the App, not a user.
+`GITHUB_TOKEN`. In App mode the operator also **rotates the triage CronJob's
+token**: it refreshes the `github-token` in the triage namespace's
+`pipeline-creds` Secret with a fresh installation token every 45 minutes, so
+the triage job no longer relies on a long-lived PAT either.
+
+`GITHUB_TOKEN` is still set by `make secrets` as the PAT-mode fallback and the
+initial triage value before the first rotation. Verify the live setup with
+`scripts/verify-hardening.sh` (checks the triage token is a `ghs_…` App token,
+among other controls) or `gh api /rate_limit` using a minted token (identity
+shows the App, not a user).
 
 ## Auth modes
 
@@ -116,8 +122,11 @@ NetworkPolicy to DNS + the proxy namespace only, and (b) injects
 `HTTPS_PROXY`/`HTTP_PROXY`/`NO_PROXY` into the agent containers. Unset, behavior
 is unchanged. Edit the allowlist in `deploy/egress-proxy/configmap.yaml` to match
 your target repo's toolchain — keep it as tight as the build actually needs.
-Requires Calico (NetworkPolicy enforcement); the triage CronJob is not yet
-proxied (tracked follow-up).
+Requires Calico (NetworkPolicy enforcement).
+
+`scripts/verify-hardening.sh` probes the live cluster to confirm Calico actually
+enforces the policy — that an allowlisted host is reachable through the proxy
+while a non-allowlisted host and direct `:443` are blocked.
 
 ## Reviewing plans
 
@@ -148,6 +157,22 @@ All target-repo and infra naming lives in `.pipeline.env` (gitignored). Run
 `make init` to (re)generate it interactively, or copy `.pipeline.env.example`
 and edit by hand. `make check-config` validates that everything required is set
 before you spin up a cluster.
+
+## Verifying the security controls
+
+- **Unit tests** (`make -C operator test`) prove the static shape: the diff
+  policy's path/size rules, the NetworkPolicy egress shape in both modes, the
+  agent pod's security context (no SA token, non-root, read-only FS, caps
+  dropped, resource limits), and the triage-token rotation logic.
+- **`scripts/verify-hardening.sh`** proves the live-cluster runtime behavior
+  unit tests can't: that Calico enforces the egress policy, that the operator's
+  applied RBAC can rotate the triage Secret, that the triage token is an App
+  installation token, and that the egress proxy is healthy.
+- **Manual checklist** for the three controls that depend on a (non-deterministic)
+  live agent run — file a demo issue and confirm each: a PR touching
+  `.github/` is auto-closed by the diff policy; a plan mentioning a sensitive
+  path is labeled `needs-plan-review` rather than `ready-for-development`; a
+  `/clarification` answered by a non-collaborator does **not** resume the agent.
 
 ## Architecture
 

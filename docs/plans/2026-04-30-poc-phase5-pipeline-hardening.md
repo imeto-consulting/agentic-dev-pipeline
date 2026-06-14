@@ -1,11 +1,15 @@
 # POC Phase 5 — Pipeline Hardening for Public Release
 
-> **Status (2026-06-10):** All three tasks' code (plus the OSS paperwork and a
-> set of audit-driven extras — see ROADMAP Phase 5) landed on branch
-> `harden/public-oss-release`. The per-task step checkboxes below that describe
-> *code* are done; the **live-cluster demo-verification steps remain unchecked**
-> because they require a Calico-enforced k3d cluster (Tier 4 / hardware-bound).
-> Run those before declaring the pipeline public-ready, then archive this plan.
+> **Status (2026-06-14):** All three tasks' code shipped, plus the OSS paperwork
+> and audit-driven extras (see ROADMAP Phase 5), including **triage CronJob
+> token rotation** — triage no longer relies on a long-lived PAT in App mode.
+> Verification is now split: unit tests cover the static shape, and
+> `scripts/verify-hardening.sh` covers the live-cluster runtime behavior
+> (Calico egress enforcement, applied RBAC, triage-token identity) as one
+> reproducible command. The only remaining manual step is the README's
+> agent-behavior checklist (diff-policy reject / plan-review gate /
+> author-association resume), which depends on a non-deterministic live agent
+> run. Run that checklist once on a Calico cluster, then archive this plan.
 
 > **For agentic workers:** Sub-tasks are checkbox items. Land each task as its own PR; do not bundle. Run the demo end-to-end after each task to confirm no regression.
 

@@ -196,7 +196,7 @@ these additional controls defend the credentials and the target repo.
 - **Namespace boundary:** each task gets its own namespace. No shared storage, no shared service accounts. The agent pod runs with `automountServiceAccountToken: false` — it has no Kubernetes API credential at all.
 - **NetworkPolicy:** Calico enforces deny-all ingress and port-scoped egress (DNS + HTTPS). By default the agent reaches any host over `:443`; in **egress-proxy mode** (`EGRESS_PROXY_URL`, see [Egress allowlist](#egress-allowlist-optional)) egress is restricted to DNS + the Squid proxy, whose CONNECT-domain allowlist is the only way out.
 - **Pod security:** non-root (UID 1000), read-only rootFS, no privilege escalation, all caps dropped, `RuntimeDefault` seccomp, CPU + memory limits, 1800s deadline.
-- **Credentials:** per-task Secrets copied from `pipeline-creds`, scoped to the task namespace and torn down with it (failed tasks TTL after `FAILED_NAMESPACE_TTL`, default 1h). With a `pipeline-app-key` Secret present the GitHub token is a freshly-minted **GitHub App installation token** (~1h TTL) instead of a long-lived PAT. The token is held in a git-credentials store, never in the remote URL.
+- **Credentials:** per-task Secrets copied from `pipeline-creds`, scoped to the task namespace and torn down with it (failed tasks TTL after `FAILED_NAMESPACE_TTL`, default 1h). With a `pipeline-app-key` Secret present the GitHub token is a freshly-minted **GitHub App installation token** (~1h TTL) instead of a long-lived PAT — for the agent pods *and* the triage CronJob, whose token the operator rotates in place every 45 min. The token is held in a git-credentials store, never in the remote URL.
 - **Diff policy:** before forwarding an agent PR for review, the operator rejects (closes + comments) any PR that touches restricted paths (`.github/`, `.devcontainer/`, `Dockerfile`, `.mcp.json`, `operator/`, `deploy/`), touches risky build/install manifests at any depth without an `approve-risky-paths:` token in the issue body, or exceeds the file/line caps. This is the primary control against the supply-chain pivot.
 - **Plan-review gate:** triage labels a plan `needs-plan-review` (not `ready-for-development`) when it mentions sensitive surface, so a human approves before any impl agent runs.
 - **Authorization:** resuming a clarification-blocked task requires the last commenter's `author_association` to be OWNER/MEMBER/COLLABORATOR — an anonymous public commenter cannot steer a credentialed agent.
@@ -213,7 +213,9 @@ NetworkPolicy from "any host on `:443`" to "DNS + the proxy only" and injects
 `HTTPS_PROXY`/`HTTP_PROXY`/`NO_PROXY` into the agent containers, so a
 prompt-injected agent can only reach allowlisted hosts (github.com,
 anthropic.com, and whatever the target repo's toolchain needs). Opt-in: unset,
-egress is unchanged. Calico-only. The triage CronJob is not yet proxied.
+egress is unchanged. Calico-only. `scripts/verify-hardening.sh` probes a live
+cluster to confirm the policy is actually enforced (allowlisted host reachable,
+others blocked).
 
 ## Image Cache
 

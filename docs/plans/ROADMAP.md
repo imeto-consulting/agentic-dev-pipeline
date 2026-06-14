@@ -93,9 +93,9 @@ Smallest set of changes to close the supply-chain pivot before going public. Cod
 - [x] Task 3 — GitHub App + per-DevTask installation token in place of `pipeline-creds.github-token` (`github_app.go`, PAT fallback retained)
 - [x] LICENSE (Apache-2.0) / CONTRIBUTING / SECURITY paperwork
 
-**Beyond the original plan (from the public-OSS security audit):** author-association gate on clarification resume, concurrency cap (`MAX_CONCURRENT_TASKS`), failed-namespace TTL, `automountServiceAccountToken: false` + resource limits + pinned busybox, untrusted-input prompt preambles, and an opt-in egress allowlist proxy (`deploy/egress-proxy/` + `EGRESS_PROXY_URL`) closing the unrestricted-`:443` exfiltration path.
+**Beyond the original plan (from the public-OSS security audit):** author-association gate on clarification resume, concurrency cap (`MAX_CONCURRENT_TASKS`), failed-namespace TTL, `automountServiceAccountToken: false` + resource limits + pinned busybox, untrusted-input prompt preambles, an opt-in egress allowlist proxy (`deploy/egress-proxy/` + `EGRESS_PROXY_URL`) closing the unrestricted-`:443` exfiltration path, and **triage CronJob token rotation** from the GitHub App (the operator refreshes the triage `github-token` every 45 min in App mode, so triage no longer relies on a long-lived PAT).
 
-Remaining before public: run the live-cluster demo verification for each task (diff-policy reject, plan-review gate, App-token rotation, egress-proxy block) and proxy the triage CronJob's token.
+Verification: unit tests cover the static shape (diff policy, NetworkPolicy shape, agent pod security context, triage-token rotation logic); [`scripts/verify-hardening.sh`](../../scripts/verify-hardening.sh) covers the live-cluster runtime behavior (Calico egress enforcement, applied RBAC, triage token identity). The three agent-behavior-dependent flows (diff-policy reject, plan-review gate, author-association resume) have a documented manual checklist in the README — run those once on a live cluster before declaring public-ready.
 
 ---
 
